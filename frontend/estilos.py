@@ -509,6 +509,110 @@ def inyectar_css():
         .stSpinner > div {{
             border-color: {COLORES["accent_cyan"]} !important;
         }}
+
+        /* ===== SECCIÓN SIMULACIÓN V2I ===== */
+        .sim-stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px;
+            margin-bottom: 1rem;
+        }}
+
+        .sim-stat-card {{
+            background: linear-gradient(145deg, rgba(17, 24, 39, 0.9), rgba(30, 27, 75, 0.4));
+            border: 1px solid {COLORES["border"]};
+            border-radius: 12px;
+            padding: 16px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }}
+
+        .sim-stat-card:hover {{
+            border-color: rgba(6, 182, 212, 0.3);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(6, 182, 212, 0.1);
+        }}
+
+        .sim-stat-value {{
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: {COLORES["accent_cyan"]};
+            margin-bottom: 4px;
+        }}
+
+        .sim-stat-label {{
+            font-size: 0.7rem;
+            font-weight: 500;
+            color: {COLORES["text_secondary"]};
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }}
+
+        .sim-stat-card.purple .sim-stat-value {{ color: {COLORES["accent_purple"]}; }}
+        .sim-stat-card.emerald .sim-stat-value {{ color: {COLORES["accent_emerald"]}; }}
+        .sim-stat-card.amber .sim-stat-value {{ color: {COLORES["accent_amber"]}; }}
+        .sim-stat-card.red .sim-stat-value {{ color: {COLORES["accent_red"]}; }}
+
+        /* ===== TABLA DE TUPLAS ===== */
+        .tupla-tabla-header {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 0.6rem;
+        }}
+
+        .tupla-tabla-header .titulo {{
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: {COLORES["text_primary"]};
+        }}
+
+        .tupla-tabla-header .badge {{
+            background: rgba(6, 182, 212, 0.1);
+            border: 1px solid rgba(6, 182, 212, 0.2);
+            border-radius: 100px;
+            padding: 2px 10px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: {COLORES["accent_cyan"]};
+            font-family: 'JetBrains Mono', monospace;
+        }}
+
+        /* ===== LEYENDA V2I ===== */
+        .v2i-legend {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            padding: 8px 14px;
+            background: rgba(17, 24, 39, 0.6);
+            border: 1px solid {COLORES["border"]};
+            border-radius: 10px;
+            margin-bottom: 0.8rem;
+            font-size: 0.75rem;
+            color: {COLORES["text_secondary"]};
+        }}
+
+        .v2i-legend-item {{
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }}
+
+        .legend-dot {{
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }}
+
+        .legend-line {{
+            width: 18px;
+            height: 3px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -517,12 +621,12 @@ def renderizar_header():
     """Renderiza el encabezado hero de la aplicación."""
     st.markdown("""
     <div class="hero-header">
-        <div class="hero-badge">🛰️ Módulo 1 — Simulación VANET</div>
+        <div class="hero-badge">🛰️ Módulo 1 & 2 — Simulación VANET</div>
         <div class="hero-title">Generador de Escenarios VANET</div>
         <div class="hero-subtitle">
-            Selecciona un área geográfica en el mapa, descarga la topología desde OpenStreetMap
-            y genera automáticamente la red vial, polígonos de edificios y rutas vehiculares
-            usando las herramientas CLI de SUMO.
+            Selecciona un área geográfica en el mapa, descarga la topología desde OpenStreetMap,
+            genera automáticamente la red vial con SUMO, y simula la conectividad V2I
+            (Vehicle-to-Infrastructure) con detección de línea de vista directa.
         </div>
         <div class="hero-tech-tags">
             <span class="tech-tag">OpenStreetMap</span>
@@ -530,6 +634,8 @@ def renderizar_header():
             <span class="tech-tag">netconvert</span>
             <span class="tech-tag">polyconvert</span>
             <span class="tech-tag">randomTrips</span>
+            <span class="tech-tag">FCD</span>
+            <span class="tech-tag">Line of Sight</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -674,3 +780,82 @@ def renderizar_resumen(n_junctions: int, n_edificios: int):
         </p>
     </div>
     """, unsafe_allow_html=True)
+
+
+def renderizar_simulacion_stats(estadisticas: dict):
+    """
+    Renderiza las estadísticas de la simulación V2I con tarjetas visuales.
+
+    Parámetros:
+        estadisticas: Diccionario con los datos de resumen generados por
+                     generar_tuplas_visibilidad().
+    """
+    total_tuplas = estadisticas.get("total_tuplas", 0)
+    total_ts = estadisticas.get("total_timesteps", 0)
+    radio_obu = estadisticas.get("radio_obu", 0)
+    resumen = estadisticas.get("resumen_por_rsu", {})
+
+    num_rsus = len(resumen)
+
+    st.markdown(f"""
+    <div class="sim-stats-grid">
+        <div class="sim-stat-card">
+            <div class="sim-stat-value">{total_tuplas:,}</div>
+            <div class="sim-stat-label">Tuplas V2I LoS</div>
+        </div>
+        <div class="sim-stat-card purple">
+            <div class="sim-stat-value">{total_ts}</div>
+            <div class="sim-stat-label">Timesteps</div>
+        </div>
+        <div class="sim-stat-card emerald">
+            <div class="sim-stat-value">{num_rsus}</div>
+            <div class="sim-stat-label">RSU activos</div>
+        </div>
+        <div class="sim-stat-card amber">
+            <div class="sim-stat-value">{radio_obu}m</div>
+            <div class="sim-stat-label">Radio OBU</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def renderizar_v2v_stats(estadisticas_v2v: dict):
+    """
+    Renderiza las estadísticas de conectividad V2V con tarjetas visuales.
+
+    Parámetros:
+        estadisticas_v2v: Diccionario con los datos de resumen generados por
+                         generar_tuplas_v2v().
+    """
+    total_tuplas = estadisticas_v2v.get("total_tuplas_v2v", 0)
+    total_ts = estadisticas_v2v.get("total_timesteps", 0)
+    total_pares = estadisticas_v2v.get("total_pares_evaluados", 0)
+    pares_rango = estadisticas_v2v.get("total_pares_en_rango", 0)
+    bidireccional = estadisticas_v2v.get("bidireccional", True)
+    radio_obu = estadisticas_v2v.get("radio_obu", 0)
+    resumen = estadisticas_v2v.get("resumen_por_vehiculo", {})
+    num_vehiculos = len(resumen)
+
+    bidi_label = "Sí" if bidireccional else "No"
+
+    st.markdown(f"""
+    <div class="sim-stats-grid">
+        <div class="sim-stat-card">
+            <div class="sim-stat-value">{total_tuplas:,}</div>
+            <div class="sim-stat-label">Tuplas V2V</div>
+        </div>
+        <div class="sim-stat-card purple">
+            <div class="sim-stat-value">{num_vehiculos}</div>
+            <div class="sim-stat-label">Vehículos conectados</div>
+        </div>
+        <div class="sim-stat-card emerald">
+            <div class="sim-stat-value">{pares_rango:,}</div>
+            <div class="sim-stat-label">Pares en rango</div>
+        </div>
+        <div class="sim-stat-card amber">
+            <div class="sim-stat-value">{bidi_label}</div>
+            <div class="sim-stat-label">Bidireccional</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+

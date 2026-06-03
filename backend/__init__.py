@@ -9,4 +9,9 @@ from backend.parsear_xml import (
     obtener_proyeccion, convertir_xy_a_lonlat,
     calcular_grado_junctions, filtrar_junctions_rsu
 )
+from backend.simulacion_sumo import ejecutar_simulacion_sumo, parsear_fcd
+from backend.visibilidad import (
+    generar_tuplas_visibilidad, guardar_tuplas_json,
+    generar_tuplas_v2v, guardar_tuplas_v2v_json
+)
 

@@ -26,13 +26,21 @@ def _buscar_random_trips() -> str:
     return "randomTrips.py"
 
 
-def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output") -> list[dict]:
+def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output",
+                           num_vehiculos: int = 20,
+                           periodo_salida: float = 1.0) -> list[dict]:
     """
     Ejecuta el pipeline completo de SUMO de forma secuencial.
     
     Parámetros:
         osm_path: Ruta al archivo .osm descargado.
         output_dir: Directorio donde se generarán los archivos de salida.
+        num_vehiculos: Número de vehículos a generar en las rutas aleatorias.
+                      Cada vehículo se crea con una ruta aleatoria origen→destino.
+        periodo_salida: Intervalo en segundos entre la salida de cada vehículo.
+                       Con periodo=1.0 y num_vehiculos=20, los vehículos salen
+                       en t=0, t=1, t=2, ..., t=19. Con periodo=2.0, salen en
+                       t=0, t=2, t=4, ..., t=38.
     
     Retorna:
         Lista de diccionarios con el resultado de cada paso:
@@ -131,12 +139,18 @@ def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output") -> list[di
 
     # ---- Paso 3: RANDOM TRIPS ----
     random_trips_path = _buscar_random_trips()
-    
+
+    # Calcular el tiempo final de generación de vehículos:
+    # Si queremos 20 vehículos con periodo 1.0s, el último vehículo sale en t=19
+    # Fórmula: end_time = num_vehiculos * periodo_salida
+    end_time = num_vehiculos * periodo_salida
+
     cmd_random_trips = [
         sys.executable, random_trips_path,
         "-n", net_path,
         "-r", rou_path,
-        "-e", "100"
+        "-e", str(end_time),
+        "-p", str(periodo_salida)
     ]
     
     try:
@@ -147,7 +161,10 @@ def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output") -> list[di
         resultados.append({
             "paso": "randomTrips",
             "exito": True,
-            "mensaje": f"Rutas aleatorias generadas: {rou_path}",
+            "mensaje": (
+                f"Rutas generadas: {rou_path} "
+                f"({num_vehiculos} vehículos, periodo {periodo_salida}s)"
+            ),
             "archivo": rou_path
         })
     except FileNotFoundError:

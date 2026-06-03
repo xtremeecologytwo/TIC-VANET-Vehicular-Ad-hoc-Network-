@@ -1,8 +1,10 @@
-# 🛰️ VANET Scenario Generator — Módulo 1
+# 🛰️ VANET Scenario Generator — Módulo 1 & 2
 
 **Trabajo de Integración Curricular — Redes Vehiculares Ad-hoc (VANETs)**
 
-Aplicación web que automatiza la generación de escenarios de simulación para redes vehiculares (VANETs). Permite seleccionar un área geográfica real desde un mapa interactivo, descargar la topología vial desde OpenStreetMap, procesarla automáticamente con las herramientas CLI de SUMO, y extraer los datos matemáticos útiles (intersecciones y edificios) en formato JSON para su uso posterior en simulaciones NS-3 u OMNET++.
+Aplicación web que automatiza la generación de escenarios de simulación para redes vehiculares (VANETs). Permite seleccionar un área geográfica real desde un mapa interactivo, descargar la topología vial desde OpenStreetMap, procesarla con las herramientas CLI de SUMO, y **simular la conectividad V2I (Vehicle-to-Infrastructure) y V2V (Vehicle-to-Vehicle)** con detección de línea de vista directa (Line of Sight — LoS) considerando edificios como obstrucciones. Las conexiones se generan considerando **únicamente la cobertura del OBU (On Board Unit)** de los vehículos. Genera:
+- **Tuplas `<t, V, RSU>`** — Conectividad V2I (Matriz B: vehículo–RSU)
+- **Tuplas `<t, Vi, Vj>`** — Conectividad V2V (Matriz A: vehículo–vehículo)
 
 ---
 
@@ -16,6 +18,9 @@ Aplicación web que automatiza la generación de escenarios de simulación para 
 - [Estructura de Archivos Detallada](#-estructura-de-archivos-detallada)
 - [Backend — Documentación Detallada](#-backend--documentación-detallada)
 - [**Filtrado Inteligente para RSU Placement**](#-filtrado-inteligente-para-rsu-placement)
+- [**Módulo 2 — Simulación V2I y Tuplas de Visibilidad**](#-módulo-2--simulación-v2i-y-tuplas-de-visibilidad)
+- [**Módulo V2V — Conectividad Vehículo-Vehículo**](#-módulo-v2v--conectividad-vehículo-vehículo)
+- [**Matrices de Conectividad**](#-matrices-de-conectividad)
 - [Frontend — Documentación Detallada](#-frontend--documentación-detallada)
 - [Orquestador Principal (app.py)](#-orquestador-principal-apppy)
 - [Guía de Experimentación](#-guía-de-experimentación)
@@ -31,7 +36,7 @@ El proyecto sigue una arquitectura **MVC simplificada** con separación clara en
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                        app.py (Orquestador)                      │
-│         Coordina la interacción entre Frontend y Backend         │
+│     Coordina Módulo 1 (Escenario), Módulo 2 (V2I) y V2V         │
 ├──────────────────────────┬───────────────────────────────────────┤
 │     📊 FRONTEND          │              ⚙️ BACKEND               │
 │                          │                                       │
@@ -40,16 +45,26 @@ El proyecto sigue una arquitectura **MVC simplificada** con separación clara en
 │  ├── mapa.py             │  ├── descargar_osm.py                 │
 │  │   ├── crear_mapa()    │  │   ├── validar_coordenadas()        │
 │  │   ├── extraer_bbox()  │  │   └── descargar_mapa_osm()         │
-│  │   └── mapa_resultados │  ├── sumo_pipeline.py                 │
-│  └── estilos.py          │  │   ├── _buscar_random_trips()       │
-│      ├── inyectar_css()  │  │   └── ejecutar_pipeline_sumo()     │
-│      ├── renderizar_*()  │  └── parsear_xml.py                   │
-│      └── COLORES{}       │      ├── parsear_junctions()          │
-│                          │      ├── parsear_edificios()           │
-│                          │      ├── obtener_proyeccion()          │
-│                          │      ├── convertir_xy_a_lonlat()       │
-│                          │      ├── calcular_grado_junctions() 🆕│
-│                          │      └── filtrar_junctions_rsu()    🆕│
+│  │   ├── mapa_resultados │  ├── sumo_pipeline.py                 │
+│  │   └── mapa_conectiv.  │  │   ├── _buscar_random_trips()       │
+│  └── estilos.py          │  │   └── ejecutar_pipeline_sumo()     │
+│      ├── inyectar_css()  │  ├── parsear_xml.py                   │
+│      ├── renderizar_*()  │  │   ├── parsear_junctions()          │
+│      └── COLORES{}       │  │   ├── parsear_edificios()           │
+│                          │  │   ├── obtener_proyeccion()          │
+│                          │  │   ├── convertir_xy_a_lonlat()       │
+│                          │  │   ├── calcular_grado_junctions()    │
+│                          │  │   └── filtrar_junctions_rsu()       │
+│                          │  ├── simulacion_sumo.py           🆕  │
+│                          │  │   ├── generar_sumocfg()             │
+│                          │  │   ├── ejecutar_simulacion_sumo()    │
+│                          │  │   └── parsear_fcd()                 │
+│                          │  └── visibilidad.py               🆕  │
+│                          │      ├── tiene_linea_de_vista()        │
+│                          │      ├── generar_tuplas_visibilidad()  │
+│                          │      ├── guardar_tuplas_json()         │
+│                          │      ├── generar_tuplas_v2v()      🆕  │
+│                          │      └── guardar_tuplas_v2v_json() 🆕  │
 └──────────────────────────┴───────────────────────────────────────┘
                                     │
                                     ▼
@@ -118,6 +133,7 @@ El pipeline se ejecuta de forma secuencial cuando el usuario presiona "Generar E
 | **`json`** | stdlib | Serialización JSON | Escribe los datos extraídos en archivos `.json` formateados con indentación para inspección humana |
 | **`os`** | stdlib | Operaciones del sistema de archivos | Gestión de rutas (`os.path.join`), creación de directorios (`os.makedirs`), verificación de archivos (`os.path.isfile`, `os.path.getsize`) y variables de entorno (`os.environ.get`) |
 | **`sys`** | stdlib | Información del sistema | Obtiene la ruta del intérprete Python activo (`sys.executable`) para ejecutar `randomTrips.py` con el mismo entorno virtual |
+| **`pandas`** | ≥1.5.0 | Manipulación de datos tabulares | Utilizado para la visualización de las matrices A y B como DataFrames interactivos en Streamlit |
 
 ### Herramientas Externas (SUMO)
 
@@ -125,7 +141,7 @@ El pipeline se ejecuta de forma secuencial cuando el usuario presiona "Generar E
 |-------------|------|-------------|
 | **`netconvert`** | Ejecutable SUMO | Convierte datos de red de diferentes fuentes (OSM, Shapefile) al formato interno de SUMO (`.net.xml`). Aplica optimizaciones: `--geometry.remove` (simplifica geometrías), `--edges.join` (fusiona aristas redundantes), `--ramps.guess` (detecta rampas), `--remove-edges.isolated` (elimina aristas aisladas) |
 | **`polyconvert`** | Ejecutable SUMO | Extrae polígonos y puntos de interés (POIs) del archivo OSM y los proyecta sobre la red vial. Genera `mapa.poly.xml` con los edificios, parques y otros elementos geográficos |
-| **`randomTrips.py`** | Script Python SUMO | Genera pares origen-destino aleatorios sobre la red vial y calcula rutas usando el algoritmo de Dijkstra. El parámetro `-e 100` indica 100 unidades de tiempo de simulación |
+| **`randomTrips.py`** | Script Python SUMO | Genera pares origen-destino aleatorios sobre la red vial y calcula rutas usando el algoritmo de Dijkstra. El parámetro `-e` indica el tiempo final de simulación |
 
 ### CSS y Diseño Visual
 
@@ -213,28 +229,34 @@ La aplicación se abrirá automáticamente en `http://localhost:8501`.
 ```
 TIC-VANET-Vehicular-Ad-hoc-Network-/
 │
-├── app.py                      # 🎯 Orquestador principal (~310 líneas)
+├── app.py                      # 🎯 Orquestador principal Módulo 1, 2 & V2V (~850 líneas)
 ├── requirements.txt            # 📦 Dependencias Python
 ├── README.md                   # 📖 Este archivo
 │
 ├── frontend/                   # 🖥️ Capa de presentación
 │   ├── __init__.py             #    Inicializador del paquete
-│   ├── mapa.py                 #    Mapa interactivo + mapa de resultados RSU (~240 líneas)
-│   └── estilos.py              #    CSS premium + componentes UI (~500 líneas)
+│   ├── mapa.py                 #    Mapas: interactivo + RSU + conectividad V2I/V2V (~460 líneas)
+│   └── estilos.py              #    CSS premium + componentes UI (~860 líneas)
 │
 ├── backend/                    # ⚙️ Capa de lógica de negocio
 │   ├── __init__.py             #    Inicializador del paquete
 │   ├── descargar_osm.py        #    Descarga de datos OSM (~86 líneas)
-│   ├── sumo_pipeline.py        #    Automatización SUMO CLI (~173 líneas)
-│   └── parsear_xml.py          #    Parseo XML + proyección + filtrado RSU (~300 líneas)
+│   ├── sumo_pipeline.py        #    Automatización SUMO CLI (~180 líneas)
+│   ├── parsear_xml.py          #    Parseo XML + proyección + filtrado RSU (~300 líneas)
+│   ├── simulacion_sumo.py      # 🆕 Simulación SUMO + parseo FCD (~240 líneas)
+│   └── visibilidad.py          # 🆕 Algoritmo LoS + tuplas V2I + tuplas V2V (~670 líneas)
 │
 └── output/                     # 📁 Archivos generados (auto-creado)
     ├── map.osm                 #    Datos crudos de OpenStreetMap
     ├── mapa.net.xml            #    Red vial SUMO (junctions + edges + connections)
     ├── mapa.poly.xml           #    Polígonos de edificios SUMO
     ├── mapa.rou.xml            #    Rutas vehiculares aleatorias
+    ├── mapa.sumocfg            # 🆕 Configuración de simulación SUMO
+    ├── fcd.xml                 # 🆕 Floating Car Data (posiciones vehiculares)
     ├── junctions_limpias.json  #    Intersecciones útiles (todas, sin filtrar)
-    └── edificios_limpios.json  #    Polígonos de edificios (datos limpios)
+    ├── edificios_limpios.json  #    Polígonos de edificios (datos limpios)
+    ├── tuplas_visibilidad.json # 🆕 Tuplas <t, V, RSU> con LoS confirmado (Matriz B)
+    └── tuplas_v2v.json         # 🆕 Tuplas <t, Vi, Vj> + Matrices A por timestep
 ```
 
 ---
@@ -337,13 +359,15 @@ polyconvert --net-file output/mapa.net.xml --osm-files output/map.osm \
 **Paso 3 — randomTrips:**
 
 ```bash
-python randomTrips.py -n output/mapa.net.xml -r output/mapa.rou.xml -e 100
+python randomTrips.py -n output/mapa.net.xml -r output/mapa.rou.xml -e 20 -p 1.0
 ```
 
 - `-n`: Archivo de red vial de entrada
 - `-r`: Archivo de rutas de salida
-- `-e 100`: Tiempo final de simulación (100 unidades = 100 vehículos)
+- `-e 20`: Tiempo final de generación de vehículos (configurable vía UI, default 20)
+- `-p 1.0`: Periodo de salida en segundos entre vehículos (configurable vía UI, default 1.0s)
 - Se ejecuta con `sys.executable` para usar el mismo intérprete Python del entorno virtual
+- **Parámetros configurables:** En la UI hay sliders para `num_vehiculos` (5–200, default 20), `periodo_salida` (0.5–5.0s, default 1.0s) y `tiempo_simulacion` (50–500s, default 150s)
 
 **Ejecución con `subprocess.run()`:**
 - `check=True`: Lanza `CalledProcessError` si el código de retorno no es 0
@@ -662,6 +686,432 @@ Los controles `LayerControl` permiten activar/desactivar cada grupo (RSU, edific
 
 ---
 
+## 📡 Módulo 2 — Simulación V2I y Tuplas de Visibilidad
+
+Esta sección documenta el **Módulo 2** del proyecto, que extiende el escenario generado en el Módulo 1 con una **simulación de tráfico real** ejecutada en SUMO, y genera las **tuplas de visibilidad `<t, V, RSU>`** que representan los momentos en que un vehículo tiene línea de vista directa (LoS) con un RSU.
+
+### ¿Qué son las tuplas de visibilidad?
+
+Una tupla `<t, V, RSU>` indica que en el instante de tiempo `t` (en segundos), el vehículo `V` tiene **comunicación directa** con el RSU `RSU`. Para que la tupla exista, deben cumplirse **dos condiciones simultáneamente**:
+
+1. **Distancia ≤ Radio OBU**: La distancia euclidiana entre el vehículo y el RSU debe ser menor o igual al radio de cobertura del OBU del vehículo.
+2. **Línea de vista directa (LoS)**: No debe haber ningún edificio que bloquee la línea recta entre el vehículo y el RSU.
+
+Si alguna de las dos condiciones no se cumple, la tupla **no existe** (NLoS — Non Line of Sight).
+
+---
+
+### Radio de cobertura OBU
+
+Las conexiones V2I se generan considerando **únicamente la cobertura del OBU (On Board Unit)** del vehículo. Es decir, un vehículo se conecta a un RSU solo si este se encuentra dentro del radio de cobertura de su OBU.
+
+| Dispositivo | Descripción | Radio típico | Tecnología |
+|-------------|-------------|--------------|------------|
+| **OBU** (On Board Unit) | Dispositivo embarcado en el vehículo | 150–300m | DSRC/802.11p, C-V2X |
+
+En la interfaz hay un slider para configurar el radio del OBU.
+
+---
+
+### Pipeline del Módulo 2
+
+```
+┌────────────────────┐     ┌────────────────────┐     ┌────────────────────┐
+│  1. GENERAR CONFIG │     │  2. SIMULAR SUMO   │     │  3. PARSEAR FCD    │
+│  mapa.sumocfg      │────▶│  sumo -c .sumocfg  │────▶│  fcd.xml → dict    │
+│  (simulacion_sumo) │     │  (subprocess)      │     │  (simulacion_sumo) │
+└────────────────────┘     └────────────────────┘     └────────┬───────────┘
+                                                               │
+┌────────────────────┐     ┌────────────────────┐     ┌────────▼───────────┐
+│  8. VISUALIZAR     │     │  5. EXPORTAR JSON  │     │  4. TUPLAS V2I     │
+│  Tabla + Matrices  │     │  tuplas_visib.json │◀────│  Matriz B (LoS)    │
+│  + 4 Mapas V2I/V2V │     │  tuplas_v2v.json   │     │  (visibilidad)     │
+└────────────────────┘     └─────────┬──────────┘     └────────────────────┘
+                                     │
+                           ┌─────────▼──────────┐
+                           │  6. TUPLAS V2V      │
+                           │  Matriz A (LoS)     │
+                           │  (visibilidad)      │
+                           └────────────────────┘
+```
+
+---
+
+### 📁 `backend/simulacion_sumo.py`
+
+Este módulo ejecuta el simulador SUMO para obtener la posición exacta de cada vehículo en cada instante de tiempo.
+
+#### `generar_sumocfg(output_dir, tiempo_simulacion) → str`
+
+Genera el archivo de configuración SUMO (`.sumocfg`) que le indica al simulador:
+- Qué red vial usar (`mapa.net.xml`)
+- Qué rutas vehiculares cargar (`mapa.rou.xml`)
+- Cuánto tiempo simular
+- Qué salida generar (FCD — Floating Car Data)
+
+**Archivo generado (`mapa.sumocfg`):**
+
+```xml
+<configuration>
+    <input>
+        <net-file value="mapa.net.xml"/>
+        <route-files value="mapa.rou.xml"/>
+    </input>
+    <time>
+        <begin value="0"/>
+        <end value="10800"/>  <!-- Configurable desde UI -->
+    </time>
+    <output>
+        <fcd-output value="fcd.xml"/>
+    </output>
+</configuration>
+```
+
+---
+
+#### `ejecutar_simulacion_sumo(output_dir, tiempo_simulacion) → (ruta_fcd, error)`
+
+Ejecuta el simulador `sumo` (sin GUI) como subproceso. Usa `sumo` en lugar de `sumo-gui` porque es más rápido y compatible con ejecución headless.
+
+El archivo FCD resultante contiene la posición de **todos los vehículos activos** en **cada segundo** de la simulación:
+
+```xml
+<fcd-export>
+    <timestep time="5.00">
+        <vehicle id="0" x="145.23" y="189.67" angle="270" speed="8.33"/>
+        <vehicle id="1" x="302.11" y="156.89" angle="90" speed="12.50"/>
+    </timestep>
+    <timestep time="6.00">
+        <vehicle id="0" x="137.56" y="189.67" angle="270" speed="7.78"/>
+        <vehicle id="1" x="315.61" y="156.89" angle="90" speed="13.50"/>
+        <vehicle id="2" x="421.05" y="234.12" angle="180" speed="3.00"/>
+    </timestep>
+</fcd-export>
+```
+
+> **Nota:** Las coordenadas `x, y` están en el sistema SUMO (metros UTM con offset), que es el **mismo sistema** que usan los edificios y los RSU. Esto elimina la necesidad de conversiones durante el cálculo de distancias y LoS.
+
+---
+
+#### `parsear_fcd(fcd_path, step_intervalo) → (dict_fcd, error)`
+
+Parsea el archivo FCD y extrae un diccionario organizado por timestep:
+
+```python
+{
+    0.0: [
+        {"id": "0", "x": 128.6, "y": 206.25, "speed": 0.0, "angle": 90.0},
+        ...
+    ],
+    1.0: [
+        {"id": "0", "x": 130.5, "y": 206.25, "speed": 5.0, "angle": 90.0},
+        {"id": "1", "x": 348.37, "y": 212.89, "speed": 3.0, "angle": 180.0},
+        ...
+    ],
+}
+```
+
+El parámetro `step_intervalo` permite muestrear cada N segundos para reducir el volumen de datos.
+
+---
+
+### 📁 `backend/visibilidad.py`
+
+Este módulo implementa el **algoritmo de detección de línea de vista directa (LoS)** y la **generación de tuplas de visibilidad** tanto V2I como V2V.
+
+#### Algoritmo de Line of Sight (LoS)
+
+Para determinar si un vehículo en `(Vx, Vy)` tiene línea de vista directa con un RSU en `(Rx, Ry)`, se traza un **segmento recto** entre ambos puntos y se verifica si algún **polígono de edificio** lo intersecta.
+
+**Operación geométrica fundamental — Test de intersección de dos segmentos:**
+
+Se usa el **test de orientación CCW (Counter-Clockwise)** para determinar si dos segmentos se cruzan. Dados tres puntos A, B, C, la función CCW calcula:
+
+```
+CCW(A, B, C) = (Bx - Ax) × (Cy - Ay) - (By - Ay) × (Cx - Ax)
+```
+
+- Si `CCW > 0`: A→B→C gira en sentido antihorario
+- Si `CCW < 0`: A→B→C gira en sentido horario
+- Si `CCW = 0`: A, B, C son colineales
+
+Dos segmentos P1P2 y P3P4 se intersectan si y solo si:
+- P1 y P2 están en **lados opuestos** de la línea P3P4 (CCW da signos distintos), Y
+- P3 y P4 están en **lados opuestos** de la línea P1P2
+
+**Verificación de LoS para un par (vehículo, RSU):**
+
+```python
+def tiene_linea_de_vista(vx, vy, rx, ry, edificios_cercanos):
+    segmento_VR = [(vx, vy), (rx, ry)]
+    
+    for edificio in edificios_cercanos:
+        # Pre-filtro: bounding box del edificio vs del segmento
+        if no_se_solapan(bbox_segmento, bbox_edificio):
+            continue  # Skip rápido — O(1)
+        
+        # Test completo: probar cada arista del polígono
+        for arista in aristas(edificio):
+            if segmentos_intersectan(segmento_VR, arista):
+                return False  # NLoS — edificio bloquea
+    
+    return True  # LoS confirmado
+```
+
+#### Optimizaciones de rendimiento
+
+Sin optimizar, el cálculo requeriría `~100 vehículos × 100 timesteps × 160 RSU × 500 edificios = ~800M` tests de intersección. Las optimizaciones implementadas reducen esto drásticamente:
+
+| Optimización | Descripción | Reducción estimada |
+|----------|-----------|----------|
+| **Pre-filtro por distancia** | Solo evaluar pares V↔RSU dentro del radio efectivo | ~90% de pares eliminados |
+| **Caché de edificios por RSU** | Para cada RSU, pre-calcular qué edificios están en su radio (se hace 1 sola vez) | ~90% de edificios eliminados |
+| **Pre-filtro por bounding box** | Solo evaluar edificios cuyo bbox se solape con el del segmento V→RSU | ~50% adicional |
+
+Con estas optimizaciones, el cálculo toma **< 5 segundos** para escenarios típicos (100 vehículos, 150 timesteps, ~160 RSU).
+
+---
+
+#### `generar_tuplas_visibilidad(datos_fcd, rsus, edificios, radio_obu) → (tuplas, estadísticas)`
+
+Algoritmo principal que genera la Matriz B de tuplas V2I. Las conexiones se generan considerando únicamente la cobertura del OBU:
+
+```
+Para cada timestep t en FCD:
+  Para cada vehículo V activo en t:
+    Para cada RSU:
+      1. distancia = √((Vx - Rx)² + (Vy - Ry)²)
+      2. Si distancia > radio_obu → SKIP
+      3. Si distancia ≤ radio_obu:
+         Si tiene_linea_de_vista(V, RSU, edificios) → AÑADIR <t, V, RSU>
+```
+
+**Solo se incluyen tuplas con LoS confirmado** (distancia OK + sin edificios bloqueando). Las condiciones NLoS no se guardan en la matriz.
+
+**Estructura de salida (JSON):**
+
+```json
+{
+    "parametros": {
+        "radio_obu": 300,
+        "total_tuplas": 1847,
+        "total_timesteps": 100
+    },
+    "rsus": {
+        "RSU_267037289": {"x": 128.6, "y": 206.25, "grado": 6}
+    },
+    "tuplas": [
+        {"t": 0.0, "vehiculo": "V0", "rsu": "RSU_267037289", "distancia": 45.3},
+        {"t": 1.0, "vehiculo": "V0", "rsu": "RSU_267037289", "distancia": 38.7}
+    ]
+}
+```
+
+---
+
+## 🚗 Módulo V2V — Conectividad Vehículo-Vehículo
+
+Esta sección documenta la generación de la **Matriz A** (conectividad vehículo-vehículo) y las tuplas V2V `<t, Vi, Vj>`.
+
+### Datos de Entrada
+
+Para cada instante de tiempo `t`, se parte de **dos tipos de tuplas**:
+
+| Tipo | Tupla | Significado |
+|------|-------|-------------|
+| **Vehículo–RCU** | `(t, v_i, r_k)` | El vehículo `v_i` tiene conectividad directa con la RCU `r_k` en el instante `t` |
+| **Vehículo–Vehículo** | `(t, v_i, v_j)` | El vehículo `v_i` tiene conectividad directa con el vehículo `v_j` en el instante `t` |
+
+### Definición Matemática de la Matriz A
+
+Sea `V = {v_1, v_2, ..., v_n}` el conjunto de vehículos activos en el instante `t`.
+
+La **Matriz A** de conectividad vehículo-vehículo es:
+
+```
+A ∈ {0, 1}^{n×n}
+```
+
+Su entrada `(i, j)` se define como:
+
+```
+A_ij = 1,  si el vehículo v_i ve directamente al vehículo v_j
+A_ij = 0,  en caso contrario
+```
+
+Inicialmente la diagonal de A puede ser cero, porque A representa enlaces físicos directos entre vehículos distintos.
+
+### Bidireccionalidad
+
+Si la conectividad V2V se modela como **bidireccional** (por defecto), la existencia de la tupla `(t, v_i, v_j)` implica también `(t, v_j, v_i)`. En ese caso, la Matriz A es **simétrica**.
+
+Si la conectividad se modela como **dirigida**, no se fuerza dicha simetría.
+
+En la interfaz hay un **checkbox** para configurar esto. Por defecto está activada la bidireccionalidad.
+
+### Algoritmo de Generación
+
+La función `generar_tuplas_v2v()` implementa el siguiente algoritmo:
+
+```
+Para cada timestep t en FCD:
+  n = número de vehículos activos en t
+  Inicializar A como matriz n×n de ceros
+  
+  Para cada par (i, j) con i < j:
+    1. distancia = √((Vi_x - Vj_x)² + (Vi_y - Vj_y)²)
+    2. Si distancia > radio_obu → SKIP
+    3. Si distancia ≤ radio_obu:
+       a. Si tiene_linea_de_vista(Vi, Vj, edificios) → LoS confirmado
+       b. A[i][j] = 1
+       c. Si bidireccional: A[j][i] = 1
+       d. Añadir tupla <t, Vi, Vj>
+       e. Si bidireccional: añadir tupla <t, Vj, Vi>
+```
+
+**Optimizaciones:**
+- Solo evaluar pares con `i < j` (evita duplicados)
+- Pre-filtrar edificios por zona (bbox de todos los vehículos + margen del radio OBU)
+- Reutiliza la misma función `tiene_linea_de_vista()` de V2I
+
+### Parámetros Configurables (UI)
+
+| Parámetro | Control UI | Default | Rango | Descripción |
+|-----------|-----------|---------|-------|-------------|
+| `radio_obu_sim` | Slider: 📱 Radio OBU | **300m** | 50 – 500m | Radio de cobertura del OBU (aplica a V2I y V2V) |
+| `v2v_bidireccional` | Checkbox: 🔄 Bidireccional | **True** | On / Off | Si la Matriz A es simétrica |
+| `step_intervalo` | Slider: ⏱️ Intervalo FCD | **1.0s** | 1.0 – 5.0s | Muestreo temporal |
+
+### Estructura del JSON de Salida (`tuplas_v2v.json`)
+
+```json
+{
+    "parametros": {
+        "radio_obu": 300,
+        "bidireccional": true,
+        "total_tuplas_v2v": 523,
+        "total_timesteps": 100,
+        "total_pares_evaluados": 15000,
+        "total_pares_en_rango": 890,
+        "resumen_por_vehiculo": {
+            "V0": {"total_conexiones": 45, "vecinos_unicos": 8},
+            "V1": {"total_conexiones": 38, "vecinos_unicos": 6}
+        }
+    },
+    "tuplas_v2v": [
+        {"t": 0.0, "vehiculo_i": "V0", "vehiculo_j": "V1", "distancia": 45.3},
+        {"t": 0.0, "vehiculo_i": "V1", "vehiculo_j": "V0", "distancia": 45.3}
+    ],
+    "matrices": {
+        "0.0": {
+            "vehiculos": ["V0", "V1", "V2"],
+            "A": [[0, 1, 0], [1, 0, 1], [0, 1, 0]]
+        },
+        "1.0": {
+            "vehiculos": ["V0", "V1", "V2", "V3"],
+            "A": [[0, 1, 0, 0], [1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0]]
+        }
+    }
+}
+```
+
+---
+
+## 🔢 Matrices de Conectividad
+
+Para cada instante de tiempo `t`, se construyen **dos matrices binarias**:
+
+### Matriz A — Vehículo×Vehículo
+
+```
+A ∈ {0, 1}^{n×n}
+
+A_ij = 1 si v_i ve directamente a v_j (con LoS + dentro del radio OBU)
+A_ij = 0 en caso contrario
+```
+
+- La diagonal es cero (un vehículo no se conecta consigo mismo)
+- Si la conectividad es bidireccional, A es simétrica: `A_ij = A_ji`
+- `n` varía en cada timestep (vehículos activos)
+
+### Matriz B — Vehículo×RSU
+
+```
+B ∈ {0, 1}^{n×m}
+
+B_ik = 1 si v_i ve directamente a la RCU r_k (con LoS + dentro del radio OBU)
+B_ik = 0 en caso contrario
+```
+
+- `n` = número de vehículos activos en el timestep
+- `m` = número de RSU candidatos (fijo)
+- Representa la conectividad a un salto: `v_i → r_k`
+
+### Visualización en la UI
+
+La pestaña **"🔢 Matrices A y B"** permite seleccionar un instante de tiempo con un slider y ver ambas matrices renderizadas como DataFrames interactivos. Se muestran:
+
+- El tamaño de cada matriz
+- El número de conexiones activas (número de 1s)
+- Los IDs de vehículos y RSU como etiquetas de filas/columnas
+
+---
+
+### Parámetros configurables (UI del Módulo 2)
+
+| Parámetro | Control UI | Default | Rango | Descripción |
+|-----------|-----------|---------|-------|---------| 
+| `num_vehiculos` | Slider: 🚗 Número de vehículos | **40** | 5 – 200 | Vehículos a generar con rutas aleatorias |
+| `periodo_salida` | Slider: ⏱️ Intervalo entre vehículos | **1.0m** | 1 – 60m | Tiempo en minutos entre la aparición de cada vehículo |
+| `tiempo_simulacion` | Slider: 🕐 Duración de simulación | **180m** | 1 – 180m | Tiempo total de la simulación SUMO en minutos (hasta 3 horas) |
+| `radio_obu_sim` | Slider: 📱 Radio OBU | **300m** | 50 – 500m | Radio de cobertura del OBU del vehículo (aplica a V2I y V2V) |
+| `step_intervalo` | Slider: ⏱️ Intervalo de muestreo FCD | **1.0s** | 1.0 – 5.0s | Cada cuántos segundos muestrear posiciones |
+| `v2v_bidireccional` | Checkbox: 🔄 Bidireccional | **True** | On / Off | Si la Matriz A V2V es simétrica |
+
+**¿Dónde cambiar los defaults en el código?**
+
+En `app.py`, dentro de la sección `# ---- Controles de generación de escenario ----` y `# ---- Controles de simulación V2I + V2V ----`. Cada slider tiene un parámetro `value` que define el default.
+
+---
+
+### Visualización del Módulo 2
+
+La interfaz de visualización tiene **4 tabs**:
+
+#### Tab 1: Tabla de Tuplas V2I
+- Tabla interactiva con todas las tuplas `<t, V, RSU>` (Matriz B)
+- Filtros por RSU, vehículo, y rango de tiempo
+- Columnas: Tiempo (s), Vehículo, RSU, Distancia (m)
+
+#### Tab 2: Tabla de Tuplas V2V
+- Tabla interactiva con todas las tuplas `<t, Vi, Vj>` (Matriz A)
+- Filtros por Vehículo i, Vehículo j, y rango de tiempo
+- Columnas: Tiempo (s), Vehículo i, Vehículo j, Distancia (m)
+
+#### Tab 3: Matrices A y B
+- Selector de timestep con slider
+- **Matriz A** (n×n): DataFrame con vehículos como filas/columnas, valores 0/1
+- **Matriz B** (n×m): DataFrame con vehículos como filas y RSU como columnas, valores 0/1
+- Estadísticas de cada matriz (dimensiones, conexiones activas)
+
+#### Tab 4: Mapas de Conectividad (instantes exactos)
+Se generan **4 mapas simultáneos**, cada uno mostrando una **captura instantánea** (snapshot) de la conectividad V2I y V2V en un momento exacto de la simulación:
+- **Mapa al 25%**: Instante exacto al 25% de la duración total
+- **Mapa al 50%**: Instante exacto al 50% de la duración total
+- **Mapa al 75%**: Instante exacto al 75% de la duración total
+- **Mapa al 100%**: Último instante de la simulación
+
+Cada mapa Folium tiene 5 capas toggleables:
+- **🏢 Edificios**: Polígonos naranjas (obstrucciones LoS)
+- **🚗 Vehículos**: Posiciones exactas de los vehículos activos en ese instante
+- **📡 Conexiones V2I**: Líneas verdes punteadas entre vehículos y RSU cuando hay LoS
+- **🚗 Conexiones V2V**: Líneas amarillas punteadas entre vehículos conectados
+- **📡 RSU Candidatos**: Marcadores rojos en las posiciones de los RSU
+
+Los mapas se muestran en una grilla 2×2 para una comparación visual directa entre momentos clave de la simulación.
+
+---
+
 ## 🧪 Guía de Experimentación
 
 ### Escenarios de prueba recomendados
@@ -802,18 +1252,23 @@ Crea un mapa de visualización con los datos extraídos del pipeline. **Detecta 
 | **Junction cruda** | Junction sin campo `grado` | Círculo, borde fino | Azul `#3b82f6` | 6px | `CircleMarker` |
 | **Edificio** | Siempre | Polígono relleno semi-transparente | Naranja `#f97316` | — | `Polygon` |
 
-**Detección automática de modo RSU:**
+---
 
-```python
-es_rsu = any("grado" in coords for coords in junctions.values())
-```
+#### `crear_mapa_conectividad(rsus, edificios, proy, tuplas, datos_fcd, timestep_exacto, tuplas_v2v) → folium.Map`
 
-Si al menos una junction tiene el campo `grado`, el mapa entra en **modo RSU** y muestra:
-- Nombre del grupo: "📡 RSU Candidatos" (en vez de "⭐ Intersecciones")
-- Tooltip enriquecido con grado de conectividad y coordenadas geográficas
-- Popup con coordenadas SUMO (x, y) y geográficas (lat, lon)
+Crea un mapa de Folium que visualiza la conectividad V2I **y V2V** en un instante de tiempo exacto.
 
-**Conversión de coordenadas:** Cada junction y vértice de edificio se convierte de coordenadas SUMO (x, y en metros) a lat/lon usando `convertir_xy_a_lonlat()` con los parámetros de proyección del `.net.xml`.
+**Capas del mapa:**
+
+| Capa | Elementos | Color | Estilo |
+|------|-----------|-------|--------|
+| 🏢 Edificios | Polígonos de edificios | Naranja `#f97316` | Relleno semi-transparente |
+| 🚗 Vehículos | Posiciones de vehículos | Multicolor | CircleMarker, radio 6px |
+| 📡 Conexiones V2I | Líneas vehículo↔RSU | Verde `#22c55e` | PolyLine punteada |
+| 🚗 Conexiones V2V | Líneas vehículo↔vehículo | Amarillo `#eab308` | PolyLine punteada |
+| 📡 RSU Candidatos | Posiciones RSU | Rojo `#ef4444` | CircleMarker, radio 9px |
+
+Las conexiones V2V se dibujan sin duplicar líneas (para pares bidireccionales, solo se dibuja una línea).
 
 ---
 
@@ -861,38 +1316,43 @@ Inyecta más de 500 líneas de CSS personalizado con:
 | `renderizar_paso_pipeline(nombre, exito, detalle)` | Fila de log del pipeline con icono ✅/❌, borde verde/rojo y detalle en monospace |
 | `renderizar_divider(texto)` | Línea separadora horizontal con etiqueta centrada en mayúsculas |
 | `renderizar_resumen(n_junctions, n_edificios)` | Tarjeta final con estadísticas numéricas y lista de archivos generados |
+| `renderizar_simulacion_stats(estadisticas)` | Tarjetas con métricas V2I: tuplas LoS, timesteps, RSU activos, radio OBU |
+| `renderizar_v2v_stats(estadisticas_v2v)` | Tarjetas con métricas V2V: tuplas V2V, vehículos conectados, pares en rango, bidireccionalidad |
 
 ---
 
 ## 🎯 Orquestador Principal (`app.py`)
 
-El archivo `app.py` (~310 líneas) es el punto de entrada de la aplicación. No contiene lógica de negocio propia — su función es **orquestar** los módulos del frontend y backend, incluyendo los controles interactivos de filtrado RSU.
+El archivo `app.py` (~850 líneas) es el punto de entrada de la aplicación. No contiene lógica de negocio propia — su función es **orquestar** los módulos del frontend y backend, incluyendo los controles interactivos de filtrado RSU y la simulación V2I + V2V.
 
 ### Gestión de Estado con `st.session_state`
 
-Streamlit re-ejecuta **todo el script** en cada interacción del usuario. Para persistir datos entre reruns, se usan tres variables de estado:
+Streamlit re-ejecuta **todo el script** en cada interacción del usuario. Para persistir datos entre reruns, se usan cinco variables de estado:
 
 | Variable | Tipo | Propósito |
 |----------|------|-----------|
 | `bbox` | `tuple\|None` | Coordenadas del Bounding Box dibujado por el usuario |
 | `ejecutar_pipeline` | `bool` | Flag que indica si el pipeline debe ejecutarse en este rerun |
 | `pipeline_resultados` | `dict\|None` | Resultados del último pipeline, incluyendo datos para filtrado RSU |
+| `ejecutar_simulacion` | `bool` | Flag que indica si la simulación V2I/V2V debe ejecutarse |
+| `simulacion_resultados` | `dict\|None` | Resultados de la simulación V2I y V2V, incluyendo tuplas y matrices |
 
-La estructura de `pipeline_resultados` después de una ejecución exitosa:
+La estructura de `simulacion_resultados` después de una ejecución exitosa:
 
 ```python
 {
-    "pasos": [("Descarga OSM", True, "map.osm (45 KB)"), ...],  # Log de pasos
-    "junctions": 620,             # Conteo total de junctions parseadas
-    "edificios": 85,              # Conteo total de edificios parseados
-    "junctions_data": {...},      # Dict completo de junctions para filtrado RSU
-    "edificios_data": {...},      # Dict completo de edificios para visualización
-    "proyeccion": {"orig": [...], "conv": [...]},  # Params de proyección UTM
-    "net_xml": "output/mapa.net.xml"  # Ruta al net.xml para calcular grados
+    "tuplas": [...],                # Lista de tuplas V2I <t, V, RSU>
+    "estadisticas": {...},          # Resumen V2I
+    "datos_fcd": {...},             # Posiciones vehiculares por timestep
+    "rsus": {...},                  # RSU candidatos
+    "edificios": {...},             # Edificios
+    "proyeccion": {...},            # Parámetros de proyección
+    "radio_obu": 300,               # Radio OBU usado
+    "tuplas_v2v": [...],            # Lista de tuplas V2V <t, Vi, Vj>
+    "matrices_v2v": {...},          # Matrices A por timestep
+    "estadisticas_v2v": {...},      # Resumen V2V
 }
 ```
-
-Esta estructura permite que el filtrado RSU funcione **en tiempo real** sin re-ejecutar el pipeline: los sliders simplemente llaman a `filtrar_junctions_rsu()` con los datos ya almacenados en sesión.
 
 ### Solución al Bug del Doble Re-render
 
@@ -924,6 +1384,8 @@ col_mapa, col_panel = st.columns([5, 2], gap="large")
 
 Todos los archivos se generan en la carpeta `output/`:
 
+### Módulo 1 — Escenario VANET
+
 | Archivo | Formato | Generado por | Contenido |
 |---------|---------|-------------|-----------|
 | `map.osm` | XML (OSM) | `descargar_osm.py` | Datos geográficos crudos: nodos, vías, relaciones, edificios, POIs |
@@ -932,6 +1394,15 @@ Todos los archivos se generan en la carpeta `output/`:
 | `mapa.rou.xml` | XML (SUMO) | `randomTrips.py` | Rutas vehiculares: pares origen-destino y secuencia de edges por ruta |
 | `junctions_limpias.json` | JSON | `parsear_xml.py` | Solo intersecciones con `type ≠ internal ∧ type ≠ dead_end`, con coordenadas `{x, y}` |
 | `edificios_limpios.json` | JSON | `parsear_xml.py` | Solo edificios, con lista de vértices `[[x₁,y₁], [x₂,y₂], ...]` |
+
+### Módulo 2 — Simulación V2I + V2V
+
+| Archivo | Formato | Generado por | Contenido |
+|---------|---------|-------------|-----------|
+| `mapa.sumocfg` | XML (SUMO) | `simulacion_sumo.py` | Configuración de la simulación: red, rutas, tiempos, salidas FCD |
+| `fcd.xml` | XML (SUMO) | `sumo` (simulador) | Floating Car Data: posición (x, y), velocidad y ángulo de cada vehículo en cada timestep |
+| `tuplas_visibilidad.json` | JSON | `visibilidad.py` | Matriz B de tuplas `<t, V, RSU>` con LoS confirmado, estadísticas por RSU |
+| `tuplas_v2v.json` | JSON | `visibilidad.py` | Matriz A de tuplas `<t, Vi, Vj>` con LoS confirmado, matrices A por timestep, estadísticas V2V |
 
 ---
 
@@ -955,10 +1426,12 @@ La conversión entre ambos sistemas se hace mediante `obtener_proyeccion()` + `c
 
 ### Extensiones Futuras
 
-1. **Módulo 2:** Visualización de tráfico simulado sobre el mapa usando datos de SUMO
-2. **Módulo 3:** Integración con NS-3 para simulación de protocolos VANET
-3. **API REST:** Migrar el backend a FastAPI para desacoplar completamente frontend y backend
-4. **Docker:** Containerizar la aplicación con SUMO incluido para facilitar despliegues
+1. ~~**Módulo 2:** Visualización de tráfico simulado sobre el mapa usando datos de SUMO~~ ✅ **Implementado**
+2. ~~**Conectividad V2V:** Matriz A vehículo-vehículo con tuplas `<t, Vi, Vj>`~~ ✅ **Implementado**
+3. **Módulo 3:** Integración con NS-3 para simulación de protocolos VANET
+4. **Conectividad multisalto:** Uso de las matrices A y B para calcular conectividad a múltiples saltos mediante potenciación de matrices
+5. **API REST:** Migrar el backend a FastAPI para desacoplar completamente frontend y backend
+6. **Docker:** Containerizar la aplicación con SUMO incluido para facilitar despliegues
 
 ---
 

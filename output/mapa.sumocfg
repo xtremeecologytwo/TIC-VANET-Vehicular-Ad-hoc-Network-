@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+               xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/sumoConfiguration.xsd">
+
+    <!-- Archivos de entrada: red vial y rutas vehiculares -->
+    <input>
+        <net-file value="mapa.net.xml"/>
+        <route-files value="mapa.rou.xml"/>
+    </input>
+
+    <!-- Duración de la simulación -->
+    <time>
+        <begin value="0"/>
+        <end value="10800"/>
+    </time>
+
+    <!-- Salida FCD: posición de cada vehículo en cada timestep -->
+    <output>
+        <fcd-output value="fcd.xml"/>
+    </output>
+
+    <!-- Configuración del reporte: suprimir warnings para ejecución limpia -->
+    <report>
+        <no-warnings value="true"/>
+        <no-step-log value="true"/>
+    </report>
+
+</configuration>
