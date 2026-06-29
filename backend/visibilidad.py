@@ -383,11 +383,10 @@ def guardar_tuplas_json(tuplas: list, estadisticas: dict, rsus: dict,
     Estructura del archivo de salida (tuplas_visibilidad.json):
     {
         "parametros": {
-            "radio_rsu": 200,
             "radio_obu": 300,
-            "radio_efectivo": 200,
             "total_tuplas": 1847,
-            ...
+            "total_timesteps": 100,
+            "resumen_por_rsu": { ... }
         },
         "rsus": {
             "RSU_ID": {"x": 128.6, "y": 206.25, "grado": 6},

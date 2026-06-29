@@ -21,6 +21,8 @@ Aplicación web que automatiza la generación de escenarios de simulación para 
 - [**Módulo 2 — Simulación V2I y Tuplas de Visibilidad**](#-módulo-2--simulación-v2i-y-tuplas-de-visibilidad)
 - [**Módulo V2V — Conectividad Vehículo-Vehículo**](#-módulo-v2v--conectividad-vehículo-vehículo)
 - [**Matrices de Conectividad**](#-matrices-de-conectividad)
+- [**Módulo Multisalto — Conectividad de varios saltos**](#-módulo-multisalto--conectividad-de-varios-saltos)
+- [**Scripts didácticos**](#-scripts-didácticos-para-entender-y-explicar-el-proyecto)
 - [Frontend — Documentación Detallada](#-frontend--documentación-detallada)
 - [Orquestador Principal (app.py)](#-orquestador-principal-apppy)
 - [Guía de Experimentación](#-guía-de-experimentación)
@@ -59,12 +61,18 @@ El proyecto sigue una arquitectura **MVC simplificada** con separación clara en
 │                          │  │   ├── generar_sumocfg()             │
 │                          │  │   ├── ejecutar_simulacion_sumo()    │
 │                          │  │   └── parsear_fcd()                 │
-│                          │  └── visibilidad.py               🆕  │
-│                          │      ├── tiene_linea_de_vista()        │
-│                          │      ├── generar_tuplas_visibilidad()  │
-│                          │      ├── guardar_tuplas_json()         │
-│                          │      ├── generar_tuplas_v2v()      🆕  │
-│                          │      └── guardar_tuplas_v2v_json() 🆕  │
+│                          │  ├── visibilidad.py               🆕  │
+│                          │  │   ├── tiene_linea_de_vista()        │
+│                          │  │   ├── generar_tuplas_visibilidad()  │
+│                          │  │   ├── guardar_tuplas_json()         │
+│                          │  │   ├── generar_tuplas_v2v()      🆕  │
+│                          │  │   └── guardar_tuplas_v2v_json() 🆕  │
+│                          │  └── multisalto.py               🆕🆕 │
+│                          │      ├── agregar_identidad() (Ã=A∨I)   │
+│                          │      ├── construir_matriz_A/B()        │
+│                          │      ├── calcular_R/S/D()              │
+│                          │      ├── calcular_vector_d()           │
+│                          │      └── analizar_timestep()           │
 └──────────────────────────┴───────────────────────────────────────┘
                                     │
                                     ▼
@@ -133,7 +141,8 @@ El pipeline se ejecuta de forma secuencial cuando el usuario presiona "Generar E
 | **`json`** | stdlib | Serialización JSON | Escribe los datos extraídos en archivos `.json` formateados con indentación para inspección humana |
 | **`os`** | stdlib | Operaciones del sistema de archivos | Gestión de rutas (`os.path.join`), creación de directorios (`os.makedirs`), verificación de archivos (`os.path.isfile`, `os.path.getsize`) y variables de entorno (`os.environ.get`) |
 | **`sys`** | stdlib | Información del sistema | Obtiene la ruta del intérprete Python activo (`sys.executable`) para ejecutar `randomTrips.py` con el mismo entorno virtual |
-| **`pandas`** | ≥1.5.0 | Manipulación de datos tabulares | Utilizado para la visualización de las matrices A y B como DataFrames interactivos en Streamlit |
+| **`pandas`** | ≥1.5.0 | Manipulación de datos tabulares | Utilizado para la visualización de las matrices A, B y de multisalto (R, S, D) como DataFrames interactivos en Streamlit |
+| **`numpy`** | ≥1.23.0 | Álgebra lineal y matrices | Motor del **módulo de multisalto**: producto de matrices (`@`), binarización, OR con la identidad y operaciones vectorizadas para calcular R_h, S_h, D_H y el vector `d` |
 
 ### Herramientas Externas (SUMO)
 
@@ -233,6 +242,10 @@ TIC-VANET-Vehicular-Ad-hoc-Network-/
 ├── requirements.txt            # 📦 Dependencias Python
 ├── README.md                   # 📖 Este archivo
 │
+├── mini_proyecto_vanet.py      # 🆕📚 Demo de TODO el flujo: mapa → LoS → A/B → multisalto
+├── ejemplo_multisalto.py       # 🆕📚 Demo solo del multisalto (A y B dados a mano)
+├── explicar_multisalto.py      # 🆕📚 Multisalto sobre un instante REAL de la simulación
+│
 ├── frontend/                   # 🖥️ Capa de presentación
 │   ├── __init__.py             #    Inicializador del paquete
 │   ├── mapa.py                 #    Mapas: interactivo + RSU + conectividad V2I/V2V (~460 líneas)
@@ -244,7 +257,8 @@ TIC-VANET-Vehicular-Ad-hoc-Network-/
 │   ├── sumo_pipeline.py        #    Automatización SUMO CLI (~180 líneas)
 │   ├── parsear_xml.py          #    Parseo XML + proyección + filtrado RSU (~300 líneas)
 │   ├── simulacion_sumo.py      # 🆕 Simulación SUMO + parseo FCD (~240 líneas)
-│   └── visibilidad.py          # 🆕 Algoritmo LoS + tuplas V2I + tuplas V2V (~670 líneas)
+│   ├── visibilidad.py          # 🆕 Algoritmo LoS + tuplas V2I + tuplas V2V (~670 líneas)
+│   └── multisalto.py           # 🆕 Conectividad multisalto R_h, S_h, D_H, d (~430 líneas)
 │
 └── output/                     # 📁 Archivos generados (auto-creado)
     ├── map.osm                 #    Datos crudos de OpenStreetMap
@@ -256,7 +270,8 @@ TIC-VANET-Vehicular-Ad-hoc-Network-/
     ├── junctions_limpias.json  #    Intersecciones útiles (todas, sin filtrar)
     ├── edificios_limpios.json  #    Polígonos de edificios (datos limpios)
     ├── tuplas_visibilidad.json # 🆕 Tuplas <t, V, RSU> con LoS confirmado (Matriz B)
-    └── tuplas_v2v.json         # 🆕 Tuplas <t, Vi, Vj> + Matrices A por timestep
+    ├── tuplas_v2v.json         # 🆕 Tuplas <t, Vi, Vj> + Matrices A por timestep
+    └── multisalto.json         # 🆕 R_H, D_H y vector d por instante (opcional, si se exporta)
 ```
 
 ---
@@ -277,7 +292,7 @@ Valida que las coordenadas del Bounding Box estén dentro de rangos geográficos
 1. **Rango de longitud:** Verifica que ambas longitudes estén en `[-180°, 180°]`
 2. **Rango de latitud:** Verifica que ambas latitudes estén en `[-90°, 90°]`
 3. **Orden lógico:** Verifica que `min < max` para ambos ejes
-4. **Tamaño del área:** Calcula `(max_lon - min_lon) × (max_lat - min_lat)` y rechaza áreas mayores a `0.25°²` (≈780 km² en el ecuador). Esto previene solicitudes demasiado grandes que la API de OSM rechazaría (límite de ~50,000 nodos).
+4. **Tamaño del área:** Calcula `(max_lon - min_lon) × (max_lat - min_lat)` y rechaza áreas mayores a `0.25°²` (≈**3.000 km²** cerca del ecuador, ya que 1° ≈ 111 km y 0.25°² ≈ 55 km × 55 km). Esto previene solicitudes demasiado grandes que la API de OSM rechazaría (límite de ~50,000 nodos).
 
 **Parámetros:**
 - `min_lon` (float): Longitud mínima del Bounding Box
@@ -359,26 +374,26 @@ polyconvert --net-file output/mapa.net.xml --osm-files output/map.osm \
 **Paso 3 — randomTrips:**
 
 ```bash
-python randomTrips.py -n output/mapa.net.xml -r output/mapa.rou.xml -e 20 -p 1.0
+python randomTrips.py -n output/mapa.net.xml -r output/mapa.rou.xml -e <end_time> -p <periodo_s>
 ```
 
 - `-n`: Archivo de red vial de entrada
 - `-r`: Archivo de rutas de salida
-- `-e 20`: Tiempo final de generación de vehículos (configurable vía UI, default 20)
-- `-p 1.0`: Periodo de salida en segundos entre vehículos (configurable vía UI, default 1.0s)
+- `-e <end_time>`: Tiempo final de generación de vehículos. Se calcula como `end_time = num_vehiculos × periodo_salida` (en segundos), que equivale a la duración total
+- `-p <periodo_s>`: Periodo de salida en **segundos** entre vehículos
 - Se ejecuta con `sys.executable` para usar el mismo intérprete Python del entorno virtual
-- **Parámetros configurables:** En la UI hay sliders para `num_vehiculos` (5–200, default 20), `periodo_salida` (0.5–5.0s, default 1.0s) y `tiempo_simulacion` (50–500s, default 150s)
+- **Parámetros configurables (UI):** `num_vehiculos` (5–200, **default 100**) y `tiempo_simulacion` en **minutos** (1–180, **default 120 min** = 2 h). El `periodo_salida` ya **no se elige a mano**: se calcula automáticamente como `tiempo_simulacion / num_vehiculos` para repartir todos los autos a lo largo de la simulación (tráfico continuo)
 
 **Ejecución con `subprocess.run()`:**
 - `check=True`: Lanza `CalledProcessError` si el código de retorno no es 0
 - `capture_output=True`: Captura stdout y stderr para diagnóstico
 - `text=True`: Decodifica la salida como texto (no bytes)
-- `timeout=120`: Mata el proceso si tarda más de 120 segundos
+- `timeout`: Mata el proceso si tarda demasiado. **120 s** para `netconvert` y `polyconvert`; **300 s** para `randomTrips` (puede tardar más al generar muchos vehículos)
 
 **Manejo de excepciones por paso:**
 - `FileNotFoundError`: El ejecutable no está en el PATH
 - `CalledProcessError`: El comando retornó un código de error (se muestra `stderr[:500]`)
-- `TimeoutExpired`: El proceso excedió los 120s
+- `TimeoutExpired`: El proceso excedió su tiempo límite (120 s / 300 s según el paso)
 
 **Retorna:** Lista de diccionarios `[{"paso": str, "exito": bool, "mensaje": str}, ...]`
 
@@ -741,13 +756,14 @@ En la interfaz hay un slider para configurar el radio del OBU.
 
 Este módulo ejecuta el simulador SUMO para obtener la posición exacta de cada vehículo en cada instante de tiempo.
 
-#### `generar_sumocfg(output_dir, tiempo_simulacion) → str`
+#### `generar_sumocfg(output_dir, tiempo_simulacion, periodo_fcd) → str`
 
 Genera el archivo de configuración SUMO (`.sumocfg`) que le indica al simulador:
 - Qué red vial usar (`mapa.net.xml`)
 - Qué rutas vehiculares cargar (`mapa.rou.xml`)
-- Cuánto tiempo simular
+- Cuánto tiempo simular (`tiempo_simulacion`, en segundos)
 - Qué salida generar (FCD — Floating Car Data)
+- **Cada cuánto escribir el FCD** (`periodo_fcd`, en segundos) mediante `device.fcd.period`
 
 **Archivo generado (`mapa.sumocfg`):**
 
@@ -759,21 +775,30 @@ Genera el archivo de configuración SUMO (`.sumocfg`) que le indica al simulador
     </input>
     <time>
         <begin value="0"/>
-        <end value="10800"/>  <!-- Configurable desde UI -->
+        <end value="7200"/>            <!-- Duración (s). 7200 = 2 h. Configurable -->
     </time>
     <output>
         <fcd-output value="fcd.xml"/>
     </output>
+    <processing>
+        <device.fcd.period value="120"/> <!-- Escribe cada 120 s = 2 min. Configurable -->
+    </processing>
+    <report>
+        <no-warnings value="true"/>
+        <no-step-log value="true"/>
+    </report>
 </configuration>
 ```
 
+> **Clave del muestreo por minutos:** `device.fcd.period` hace que SUMO registre la posición solo en `t = 0, periodo, 2·periodo, …` (alineado al reloj global). Así, con muestreo cada 2 min, el `fcd.xml` es pequeño y **todos los vehículos quedan registrados en los mismos instantes** (necesario para construir las matrices A y B).
+
 ---
 
-#### `ejecutar_simulacion_sumo(output_dir, tiempo_simulacion) → (ruta_fcd, error)`
+#### `ejecutar_simulacion_sumo(output_dir, tiempo_simulacion, periodo_fcd) → (ruta_fcd, error)`
 
-Ejecuta el simulador `sumo` (sin GUI) como subproceso. Usa `sumo` en lugar de `sumo-gui` porque es más rápido y compatible con ejecución headless.
+Ejecuta el simulador `sumo` (sin GUI) como subproceso, con `timeout=600` s (10 min) para soportar simulaciones largas (2–3 h). Usa `sumo` en lugar de `sumo-gui` porque es más rápido y compatible con ejecución headless.
 
-El archivo FCD resultante contiene la posición de **todos los vehículos activos** en **cada segundo** de la simulación:
+El archivo FCD resultante contiene la posición de **todos los vehículos activos** en cada instante de muestreo. SUMO escribe el FCD según `device.fcd.period` (alineado al reloj global: `t = 0, periodo, 2·periodo, …`), de modo que con un muestreo de 2 minutos el archivo es pequeño y todos los autos quedan en los **mismos instantes**:
 
 ```xml
 <fcd-export>
@@ -811,7 +836,7 @@ Parsea el archivo FCD y extrae un diccionario organizado por timestep:
 }
 ```
 
-El parámetro `step_intervalo` permite muestrear cada N segundos para reducir el volumen de datos.
+El parámetro `step_intervalo` (en segundos; la UI lo expone en minutos) permite muestrear cada N segundos para reducir el volumen de datos. Se pasa también a SUMO como `device.fcd.period` para que el propio simulador escriba solo esas muestras.
 
 ---
 
@@ -980,7 +1005,7 @@ Para cada timestep t en FCD:
 |-----------|-----------|---------|-------|-------------|
 | `radio_obu_sim` | Slider: 📱 Radio OBU | **300m** | 50 – 500m | Radio de cobertura del OBU (aplica a V2I y V2V) |
 | `v2v_bidireccional` | Checkbox: 🔄 Bidireccional | **True** | On / Off | Si la Matriz A es simétrica |
-| `step_intervalo` | Slider: ⏱️ Intervalo FCD | **1.0s** | 1.0 – 5.0s | Muestreo temporal |
+| `step_intervalo` | Slider: ⏱️ Intervalo de muestreo | **2 min** | 1 – 30 min | Cada cuántos minutos se toma una muestra del tráfico |
 
 ### Estructura del JSON de Salida (`tuplas_v2v.json`)
 
@@ -1061,11 +1086,11 @@ La pestaña **"🔢 Matrices A y B"** permite seleccionar un instante de tiempo 
 
 | Parámetro | Control UI | Default | Rango | Descripción |
 |-----------|-----------|---------|-------|---------| 
-| `num_vehiculos` | Slider: 🚗 Número de vehículos | **40** | 5 – 200 | Vehículos a generar con rutas aleatorias |
-| `periodo_salida` | Slider: ⏱️ Intervalo entre vehículos | **1.0m** | 1 – 60m | Tiempo en minutos entre la aparición de cada vehículo |
-| `tiempo_simulacion` | Slider: 🕐 Duración de simulación | **180m** | 1 – 180m | Tiempo total de la simulación SUMO en minutos (hasta 3 horas) |
+| `num_vehiculos` | Slider: 🚗 Número de vehículos | **100** | 5 – 200 | Vehículos totales a generar con rutas aleatorias |
+| `tiempo_simulacion` | Slider: 🕐 Duración de simulación | **120 min** | 1 – 180 min | Tiempo total de la simulación SUMO en minutos (hasta 3 horas; 120 = 2 h) |
+| `periodo_salida` | **Automático** (no es slider) | — | — | Se calcula como `duración / Nº autos`: reparte los autos a lo largo de la simulación |
 | `radio_obu_sim` | Slider: 📱 Radio OBU | **300m** | 50 – 500m | Radio de cobertura del OBU del vehículo (aplica a V2I y V2V) |
-| `step_intervalo` | Slider: ⏱️ Intervalo de muestreo FCD | **1.0s** | 1.0 – 5.0s | Cada cuántos segundos muestrear posiciones |
+| `step_intervalo` | Slider: ⏱️ Intervalo de muestreo | **2 min** | 1 – 30 min | Cada cuántos **minutos** se toma una muestra (foto) del tráfico |
 | `v2v_bidireccional` | Checkbox: 🔄 Bidireccional | **True** | On / Off | Si la Matriz A V2V es simétrica |
 
 **¿Dónde cambiar los defaults en el código?**
@@ -1076,7 +1101,7 @@ En `app.py`, dentro de la sección `# ---- Controles de generación de escenario
 
 ### Visualización del Módulo 2
 
-La interfaz de visualización tiene **4 tabs**:
+La interfaz de visualización tiene **5 tabs**:
 
 #### Tab 1: Tabla de Tuplas V2I
 - Tabla interactiva con todas las tuplas `<t, V, RSU>` (Matriz B)
@@ -1094,7 +1119,14 @@ La interfaz de visualización tiene **4 tabs**:
 - **Matriz B** (n×m): DataFrame con vehículos como filas y RSU como columnas, valores 0/1
 - Estadísticas de cada matriz (dimensiones, conexiones activas)
 
-#### Tab 4: Mapas de Conectividad (instantes exactos)
+#### Tab 4: Multisalto
+- Selector de máximo de saltos `H` (1–6) y de instante de tiempo
+- Checkbox **"Forzar A simétrica"**
+- Tabla resumen por salto (pares alcanzables, vehículos conectados, pares nuevos)
+- Visor de cualquier matriz `R_h`, `S_h` o `D_H`, y el vector `d` de vehículos aislados
+- Ver la sección [**Módulo Multisalto**](#-módulo-multisalto--conectividad-de-varios-saltos) para el detalle matemático
+
+#### Tab 5: Mapas de Conectividad (instantes exactos)
 Se generan **4 mapas simultáneos**, cada uno mostrando una **captura instantánea** (snapshot) de la conectividad V2I y V2V en un momento exacto de la simulación:
 - **Mapa al 25%**: Instante exacto al 25% de la duración total
 - **Mapa al 50%**: Instante exacto al 50% de la duración total
@@ -1189,6 +1221,127 @@ json_path = os.path.join(OUTPUT_DIR, "rsu_candidatos.json")
 with open(json_path, "w", encoding="utf-8") as f:
     json.dump(junctions_rsu, f, indent=4, ensure_ascii=False)
 ```
+
+---
+
+## 🔗 Módulo Multisalto — Conectividad de varios saltos
+
+Esta sección documenta el módulo [`backend/multisalto.py`](backend/multisalto.py), que implementa el documento *"Construcción de matrices de conectividad multisalto vehículo–RCU"*. Toma las matrices de **un salto** que ya genera el proyecto (A y B) y calcula si un vehículo puede alcanzar un RSU **rebotando a través de otros vehículos**.
+
+### ¿Qué problema resuelve?
+
+Hasta ahora, la Matriz B solo dice si un vehículo ve **directamente** un RSU (1 salto). Pero en una VANET un vehículo puede estar fuera del alcance de todo RSU y aun así comunicarse, **usando a otros vehículos como repetidores**:
+
+```
+1 salto:   V_i ───────────────────────► R_k        (B directo)
+2 saltos:  V_i ──► V_j ──────────────► R_k        (rebota en 1 vehículo)
+3 saltos:  V_i ──► V_j ──► V_l ───────► R_k        (rebota en 2 vehículos)
+```
+
+El módulo responde, para **cada instante de tiempo por separado**: *¿qué vehículos alcanzan qué RSU usando como máximo H saltos, y cuáles quedan totalmente incomunicados?*
+
+### Las fórmulas (y qué significa cada una)
+
+| Símbolo | Nombre | Fórmula | Significado |
+|---------|--------|---------|-------------|
+| `β(X)` | Binarización | `β(X)=1 si X>0, si no 0` | Solo importa si existe **al menos un** camino, no cuántos |
+| `Ã` | A con identidad | `Ã = A ∨ I` | Pone 1 en la diagonal; conserva conexiones al subir de saltos (**monotonía**) |
+| `R_h` | Acumulada | `R₁=B`, `R_h=β(Ã·R_{h-1})` | vᵢ alcanza rₖ usando **hasta** h saltos |
+| `S_h` | Primera aparición | `S₁=R₁`, `S_h=R_h − R_{h-1}` | vᵢ alcanza rₖ con un **mínimo exacto** de h saltos |
+| `D_H` | Desconexión | `D_H = J − R_H` | 1 = vᵢ **no** logró conectarse con rₖ ni con H saltos |
+| `d` | Vector aislados | `dᵢ=1 si fila i de R_H es todo ceros` | vᵢ no alcanza **ningún** RSU |
+
+**¿Por qué la identidad `Ã = A ∨ I`?** Sin ella, `A·B` daría caminos de longitud *exactamente* h (se "perderían" las conexiones más cortas al multiplicar). Al poner 1 en la diagonal, un vehículo "se incluye a sí mismo" y las conexiones ya halladas se arrastran: así se garantiza `R₁ ≤ R₂ ≤ ... ≤ R_H` (acumulación real).
+
+### Pieza clave: alinear A y B
+
+Para poder multiplicar `Ã · B`, **ambas matrices deben usar el mismo orden de vehículos**. El módulo usa como orden canónico el de `matrices_v2v[t]["vehiculos"]` (el que ya produce el V2V) y reconstruye B sobre ese mismo orden con [`construir_matriz_B()`](backend/multisalto.py). Esto es exactamente lo que faltaba antes: la Matriz B solo existía como lista de tuplas suelta.
+
+> **Simetría de A:** físicamente, si el vehículo i ve al j, entonces j ve al i. Por eso `analizar_timestep()` simetriza A por defecto (`forzar_simetria=True`, calcula `A = β(A ∨ Aᵀ)`). Esto repara automáticamente el caso en que la simulación se haya corrido con V2V *dirigida* (no simétrica), que rompería el multisalto.
+
+### Funciones principales
+
+| Función | Qué hace |
+|---------|----------|
+| `binarizar(X)` | Aplica β(X): convierte cualquier valor > 0 en 1 |
+| `agregar_identidad(A)` | Calcula Ã = A ∨ I (1s en la diagonal) |
+| `construir_matriz_A(matriz_v2v_t, forzar_simetria)` | Saca A del JSON V2V; opcionalmente la simetriza |
+| `construir_matriz_B(tuplas_v2i, t, vehiculos, rsu_ids)` | Reconstruye B **alineada** al orden de A |
+| `calcular_R(Ã, B, H)` | Devuelve `[R₁, …, R_H]` |
+| `calcular_S(lista_R)` | Devuelve `[S₁, …, S_H]` |
+| `calcular_D(R_H)` / `calcular_vector_d(R_H)` | Matriz de desconexión y vector de aislados |
+| `analizar_timestep(...)` | **Pipeline completo** de un instante: A, Ã, B, R, S, D, d + resumen |
+| `analizar_todos(...)` / `guardar_multisalto_json(...)` | Procesa todos los instantes y exporta a `multisalto.json` |
+
+### Ejemplo resuelto (el del documento)
+
+Con 4 vehículos, 3 RSU y H=3:
+
+```
+A = [[0,1,0,0],     B = [[1,0,0],      (v1→r1, v2→r3, v3→r2;
+     [1,0,1,0],          [0,0,1],        enlaces V2V: v1↔v2, v2↔v3;
+     [0,1,0,0],          [0,1,0],        v4 sin ningún enlace)
+     [0,0,0,0]]          [0,0,0]]
+```
+
+Resultado (verificado por el módulo):
+
+```
+R₃ = [[1,1,1],    S₂ = [[0,0,1],    S₃ = [[0,1,0],    D₃ = [[0,0,0],   d = [0,
+      [1,1,1],          [1,1,0],          [0,0,0],          [0,0,0],        0,
+      [1,1,1],          [0,0,1],          [1,0,0],          [0,0,0],        0,
+      [0,0,0]]          [0,0,0]]          [0,0,0]]          [1,1,1]]        1]
+```
+
+Lectura: **v1, v2 y v3 alcanzan las 3 RSU** en ≤3 saltos (p. ej. `v1→v2→v3→r2` es un camino de 3 saltos que aparece en S₃). **v4 queda totalmente aislado** (`d₄=1`) porque no tiene ningún enlace, ni directo ni multisalto.
+
+### Visualización en la UI
+
+En la pestaña **"🔗 Multisalto"** (dentro de los resultados del Módulo 2) puedes:
+
+- Elegir el **máximo de saltos H** (1–6) y el **instante de tiempo**.
+- Activar/desactivar **"Forzar A simétrica"**.
+- Ver una **tabla resumen por salto**: pares vehículo→RSU alcanzables acumulados, vehículos con al menos un RSU, y pares nuevos en cada salto.
+- Seleccionar y ver cualquier matriz `R_h`, `S_h` o `D_H` como tabla.
+- Ver el **vector `d`** con los vehículos totalmente desconectados (también resaltados con una alerta).
+
+---
+
+## 📚 Scripts didácticos (para entender y explicar el proyecto)
+
+Además de la aplicación, el proyecto incluye **3 scripts de consola** pensados para *entender* y *explicar* cómo funciona el pipeline, de lo más simple a lo más real. Todos usan las **funciones reales** del proyecto (`backend/visibilidad.py` y `backend/multisalto.py`), así que no son cálculos "de mentira".
+
+| Script | Qué muestra | Cuándo usarlo |
+|--------|-------------|---------------|
+| [`mini_proyecto_vanet.py`](mini_proyecto_vanet.py) | **Todo el flujo** en miniatura: posiciones de coches + 1 edificio → línea de vista (LoS) → tuplas → Matriz A (V2V) y Matriz B (V2I) → multisalto (R, S, D, d) | Para explicar el proyecto **completo** de principio a fin |
+| [`ejemplo_multisalto.py`](ejemplo_multisalto.py) | Solo la parte de **multisalto**, con A y B dadas a mano (cadena V1→V2→V3→RSU + un coche aislado) | Para entender **solo las matrices** y los saltos |
+| [`explicar_multisalto.py`](explicar_multisalto.py) | El multisalto sobre un **instante real** de tu simulación (lee `output/*.json`) | Para demostrar que funciona con **datos verdaderos** |
+
+**Cómo ejecutarlos:**
+
+```bash
+python mini_proyecto_vanet.py          # demo completa (escenario de juguete)
+python ejemplo_multisalto.py           # demo del multisalto
+python explicar_multisalto.py          # instante real (elige uno automáticamente)
+python explicar_multisalto.py 120 3    # instante t=120 s con H=3 saltos
+```
+
+> Los dos primeros (`mini_proyecto_vanet.py` y `ejemplo_multisalto.py`) son **autocontenidos**: no necesitan haber corrido la simulación. `explicar_multisalto.py` sí necesita los JSON de `output/`.
+
+**Ejemplo de lo que imprime `mini_proyecto_vanet.py`** (escenario: V1 ve la antena, V2 la tiene tapada por un edificio, V3 está fuera de rango, V4 aislado):
+
+```
+V1 ↔ R1: dist  80.0 m  (≤ 120) ✓  y SIN edificio ✓  → ¡CONEXIÓN!
+V2 ↔ R1: dist 103.1 m  (≤ 120) ✓  pero un EDIFICIO tapa ✗  → NLoS, sin conexión
+...
+RESULTADO FINAL:
+  V1:  ✅ conectado — mínimo 1 salto(s)     (la ve directo)
+  V2:  ✅ conectado — mínimo 2 salto(s)     (V2 → V1 → R1)
+  V3:  ✅ conectado — mínimo 3 salto(s)     (V3 → V2 → V1 → R1)
+  V4:  🚫 AISLADO
+```
+
+Puedes cambiar las posiciones (`COCHES`, `ANTENAS`, `EDIFICIOS`, `RADIO_OBU`) al inicio de `mini_proyecto_vanet.py` y volver a correr para ver cómo cambia todo el resultado.
 
 ---
 
@@ -1403,6 +1556,7 @@ Todos los archivos se generan en la carpeta `output/`:
 | `fcd.xml` | XML (SUMO) | `sumo` (simulador) | Floating Car Data: posición (x, y), velocidad y ángulo de cada vehículo en cada timestep |
 | `tuplas_visibilidad.json` | JSON | `visibilidad.py` | Matriz B de tuplas `<t, V, RSU>` con LoS confirmado, estadísticas por RSU |
 | `tuplas_v2v.json` | JSON | `visibilidad.py` | Matriz A de tuplas `<t, Vi, Vj>` con LoS confirmado, matrices A por timestep, estadísticas V2V |
+| `multisalto.json` | JSON | `multisalto.py` | (Opcional) `R_H`, `D_H` y vector `d` por instante + resumen por salto. Se genera al exportar el análisis multisalto |
 
 ---
 
@@ -1428,8 +1582,8 @@ La conversión entre ambos sistemas se hace mediante `obtener_proyeccion()` + `c
 
 1. ~~**Módulo 2:** Visualización de tráfico simulado sobre el mapa usando datos de SUMO~~ ✅ **Implementado**
 2. ~~**Conectividad V2V:** Matriz A vehículo-vehículo con tuplas `<t, Vi, Vj>`~~ ✅ **Implementado**
-3. **Módulo 3:** Integración con NS-3 para simulación de protocolos VANET
-4. **Conectividad multisalto:** Uso de las matrices A y B para calcular conectividad a múltiples saltos mediante potenciación de matrices
+3. ~~**Conectividad multisalto:** Uso de las matrices A y B para calcular conectividad a múltiples saltos mediante producto binario de matrices (R_h, S_h, D_H, vector d)~~ ✅ **Implementado** (módulo [`backend/multisalto.py`](backend/multisalto.py))
+4. **Módulo 3:** Integración con NS-3 para simulación de protocolos VANET
 5. **API REST:** Migrar el backend a FastAPI para desacoplar completamente frontend y backend
 6. **Docker:** Containerizar la aplicación con SUMO incluido para facilitar despliegues
 

@@ -38,6 +38,7 @@ from backend.visibilidad import (
     generar_tuplas_visibilidad, guardar_tuplas_json,
     generar_tuplas_v2v, guardar_tuplas_v2v_json
 )
+from backend.multisalto import analizar_timestep
 
 
 # ==========================================
@@ -117,26 +118,34 @@ with col_panel:
 
         num_vehiculos = st.slider(
             "🚗 Número de vehículos",
-            min_value=5, max_value=200, value=40, step=5,
-            help="Cantidad de vehículos con rutas aleatorias a generar."
-        )
-        periodo_salida_min = st.slider(
-            "⏱️ Intervalo entre vehículos (minutos)",
-            min_value=1.0, max_value=60.0, value=1.0, step=1.0,
-            help="Tiempo en minutos entre la aparición de cada vehículo. "
-                 "⚠️ Atención: Si el intervalo es muy grande (ej. 5 minutos), "
-                 "los vehículos podrían cruzar el mapa y salir antes de que aparezca "
-                 "el siguiente, resultando en 0 conexiones V2V simultáneas."
+            min_value=5, max_value=200, value=100, step=5,
+            help="Cantidad total de vehículos con rutas aleatorias a generar "
+                 "durante toda la simulación."
         )
         tiempo_simulacion_min = st.slider(
             "🕐 Duración de simulación (minutos)",
-            min_value=1, max_value=180, value=180, step=1,
-            help="Tiempo total de la simulación SUMO. Soporta hasta 3 horas (180 min)."
+            min_value=1, max_value=180, value=120, step=1,
+            help="Tiempo total de la simulación SUMO. Soporta hasta 3 horas (180 min). "
+                 "Ej.: 120 min = 2 horas de tráfico."
         )
 
-        # Convertir a segundos para el backend de SUMO
-        periodo_salida = periodo_salida_min * 60.0
+        # Duración en segundos para el backend de SUMO
         tiempo_simulacion = tiempo_simulacion_min * 60
+
+        # Salida AUTOMÁTICA de vehículos: se reparten los N autos a lo largo de
+        # toda la duración (período = duración / Nº autos). Así se garantiza que
+        # TODOS salgan dentro de la simulación y el tráfico sea continuo, en vez
+        # de tener un intervalo fijo que dejaría autos sin aparecer.
+        periodo_salida = tiempo_simulacion / num_vehiculos  # segundos entre autos
+
+        st.markdown(f"""
+        <div style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2);
+                    border-radius: 8px; padding: 8px 12px; font-size: 0.78rem; margin-top: 0.4rem;">
+            🚦 <strong style="color:#10b981;">Salida automática:</strong>
+            1 vehículo cada <strong>{periodo_salida:.1f} s</strong>
+            → {num_vehiculos} autos repartidos en {tiempo_simulacion_min} min.
+        </div>
+        """, unsafe_allow_html=True)
 
     # Botón principal — usa callback para guardar el flag ANTES del re-render
     st.markdown("<div style='margin-top: 0.5rem;'></div>", unsafe_allow_html=True)
@@ -406,13 +415,17 @@ if st.session_state.pipeline_resultados:
                      "Se usa tanto para conexiones V2I como V2V."
             )
 
-            step_intervalo = st.slider(
-                "⏱️ Intervalo de muestreo FCD (segundos)",
-                min_value=1.0, max_value=5.0, value=1.0, step=0.5,
-                key="step_intervalo",
-                help="Cada cuántos segundos tomar una muestra de la posición "
-                     "de los vehículos. 1.0 = cada segundo (más preciso pero más datos)."
+            step_intervalo_min = st.slider(
+                "⏱️ Intervalo de muestreo (minutos)",
+                min_value=1, max_value=30, value=2, step=1,
+                key="step_intervalo_min",
+                help="Cada cuántos MINUTOS se toma una 'foto' del tráfico para "
+                     "construir las matrices A y B (y el multisalto). "
+                     "Ej.: 2 = cada 2 min, 15 = cada 15 min. El análisis se hace "
+                     "sobre estas muestras discretas, no segundo a segundo."
             )
+            # A segundos para el backend (parsear_fcd y el período de FCD de SUMO)
+            step_intervalo = step_intervalo_min * 60.0
 
             st.markdown("---")
 
@@ -462,7 +475,11 @@ if st.session_state.pipeline_resultados:
 
             # Paso 1: Ejecutar simulación SUMO
             with st.spinner("🚗 Ejecutando simulación de tráfico SUMO..."):
-                fcd_path, err_sim = ejecutar_simulacion_sumo(OUTPUT_DIR, tiempo_sim)
+                # SUMO solo escribe la posición cada 'step_intervalo' segundos
+                # (mismo valor del muestreo), para no generar un FCD gigante.
+                fcd_path, err_sim = ejecutar_simulacion_sumo(
+                    OUTPUT_DIR, tiempo_sim, periodo_fcd=step_intervalo
+                )
 
             if err_sim:
                 renderizar_paso_pipeline("Simulación SUMO", False, err_sim)
@@ -570,10 +587,11 @@ if st.session_state.pipeline_resultados:
 
             if tuplas or tuplas_v2v:
                 # ---- Tabs de visualización ----
-                tab_tabla_v2i, tab_tabla_v2v, tab_matrices, tab_mapa = st.tabs([
+                tab_tabla_v2i, tab_tabla_v2v, tab_matrices, tab_multisalto, tab_mapa = st.tabs([
                     "📋 Tuplas V2I",
                     "🚗 Tuplas V2V",
                     "🔢 Matrices A y B",
+                    "🔗 Multisalto",
                     "🗺️ Mapas de Conectividad"
                 ])
 
@@ -826,7 +844,142 @@ if st.session_state.pipeline_resultados:
                             else:
                                 st.info("Sin datos para construir Matriz B en este instante.")
 
-                # ============ TAB 4: 4 MAPAS DE CONECTIVIDAD ============
+                # ============ TAB 4: MULTISALTO ============
+                with tab_multisalto:
+                    st.markdown("#### 🔗 Conectividad Multisalto Vehículo → RSU")
+                    st.markdown("""
+                    <div style="font-size: 0.82rem; color: #94a3b8; margin-bottom: 1rem; line-height: 1.6;">
+                        Combina la <strong style="color: #eab308;">Matriz A</strong> (V2V) y la
+                        <strong style="color: #06b6d4;">Matriz B</strong> (V2I) para calcular si un vehículo
+                        alcanza un RSU <strong>rebotando</strong> a través de otros vehículos (multisalto):<br>
+                        • <strong>1 salto:</strong> V → RSU &nbsp;&nbsp;
+                        • <strong>2 saltos:</strong> V → V → RSU &nbsp;&nbsp;
+                        • <strong>3 saltos:</strong> V → V → V → RSU<br>
+                        Fórmulas: Ã = A ∨ I, &nbsp; R₁ = B, &nbsp; Rₕ = β(Ã·Rₕ₋₁), &nbsp;
+                        Sₕ = Rₕ − Rₕ₋₁, &nbsp; D_H = J − R_H.
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    if not matrices_v2v:
+                        st.info("Ejecuta primero la simulación V2V para tener la Matriz A por instante.")
+                    else:
+                        import pandas as pd
+
+                        # ---- Controles ----
+                        col_ms1, col_ms2, col_ms3 = st.columns([2, 2, 3])
+                        with col_ms1:
+                            H_saltos = st.slider(
+                                "🔢 Máximo de saltos (H)",
+                                min_value=1, max_value=6, value=3, step=1,
+                                key="H_multisalto",
+                                help="Número máximo de saltos permitidos para llegar a un RSU."
+                            )
+                        with col_ms2:
+                            forzar_sim = st.checkbox(
+                                "🔄 Forzar A simétrica",
+                                value=True,
+                                key="forzar_sim_multisalto",
+                                help="Garantiza que si i ve a j, j ve a i (recomendado). "
+                                     "Repara el caso en que la simulación se corrió como 'dirigida'."
+                            )
+                        with col_ms3:
+                            ts_ms_opciones = sorted(matrices_v2v.keys())
+                            ts_ms = st.select_slider(
+                                "⏱️ Instante de tiempo (s)",
+                                options=ts_ms_opciones,
+                                value=ts_ms_opciones[len(ts_ms_opciones) // 4],
+                                key="ts_multisalto"
+                            )
+
+                        rsu_ids_ms = sorted(rsus_sim.keys())
+
+                        # ---- Calcular el análisis multisalto del instante ----
+                        res_ms = analizar_timestep(
+                            matrices_v2v[ts_ms], tuplas, ts_ms,
+                            rsu_ids_ms, H=H_saltos, forzar_simetria=forzar_sim
+                        )
+
+                        if res_ms["resumen"]["n_vehiculos"] == 0:
+                            st.info("No hay vehículos activos en este instante.")
+                        else:
+                            vehiculos_ms = res_ms["vehiculos"]
+                            resumen_ms = res_ms["resumen"]
+
+                            # ---- Resumen por salto ----
+                            st.markdown("##### 📈 Resumen por número de saltos")
+                            df_resumen = pd.DataFrame([
+                                {
+                                    "Saltos (h)": f"≤ {p['h']}",
+                                    "Pares V→RSU alcanzables": p["pares_acumulados"],
+                                    "Vehículos con ≥1 RSU": p["vehiculos_conectados"],
+                                    "Pares nuevos (exact. h)": p["pares_nuevos"],
+                                }
+                                for p in resumen_ms["por_salto"]
+                            ])
+                            st.dataframe(df_resumen, use_container_width=True, hide_index=True)
+
+                            n_desc = resumen_ms["vehiculos_desconectados"]
+                            if n_desc > 0:
+                                st.warning(
+                                    f"🚫 {n_desc} vehículo(s) totalmente desconectado(s) "
+                                    f"(no alcanzan ningún RSU ni con {H_saltos} saltos): "
+                                    f"{', '.join(resumen_ms['ids_desconectados'])}"
+                                )
+                            else:
+                                st.success(
+                                    f"✅ Todos los vehículos alcanzan al menos un RSU usando hasta {H_saltos} saltos."
+                                )
+
+                            # ---- Selector de matriz a visualizar ----
+                            st.markdown("##### 🔍 Matrices del instante")
+                            opciones_matriz = (
+                                [f"R{h} — Acumulada (≤{h} saltos)" for h in range(1, H_saltos + 1)] +
+                                [f"S{h} — Primera aparición (exact. {h})" for h in range(1, H_saltos + 1)] +
+                                [f"D{H_saltos} — Desconexión (1 = no conecta)"]
+                            )
+                            sel_matriz = st.selectbox(
+                                "Matriz a mostrar",
+                                opciones_matriz,
+                                key="sel_matriz_multisalto"
+                            )
+
+                            # Resolver qué matriz mostrar
+                            if sel_matriz.startswith("R"):
+                                h = int(sel_matriz[1:].split(" ")[0])
+                                M = res_ms["R"][h - 1]
+                                color = "#06b6d4"
+                            elif sel_matriz.startswith("S"):
+                                h = int(sel_matriz[1:].split(" ")[0])
+                                M = res_ms["S"][h - 1]
+                                color = "#eab308"
+                            else:
+                                M = res_ms["D"]
+                                color = "#ef4444"
+
+                            df_M = pd.DataFrame(M, index=vehiculos_ms, columns=rsu_ids_ms)
+                            st.dataframe(
+                                df_M,
+                                use_container_width=True,
+                                height=min(420, 60 + len(vehiculos_ms) * 35)
+                            )
+                            st.markdown(f"""
+                            <div style="font-size: 0.75rem; color: #94a3b8;">
+                                <strong style="color: {color};">{sel_matriz}</strong> —
+                                tamaño {M.shape[0]}×{M.shape[1]}, {int(M.sum())} unos,
+                                en t={ts_ms}s (filas = vehículos, columnas = RSU).
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            # ---- Vector d de desconectados ----
+                            with st.expander("📉 Vector d — vehículos totalmente desconectados"):
+                                df_d = pd.DataFrame(
+                                    {"d (1=aislado)": res_ms["d"]},
+                                    index=vehiculos_ms
+                                )
+                                st.dataframe(df_d, use_container_width=True,
+                                             height=min(300, 60 + len(vehiculos_ms) * 35))
+
+                # ============ TAB 5: 4 MAPAS DE CONECTIVIDAD ============
                 with tab_mapa:
                     st.markdown("#### 🗺️ Mapas de Conectividad V2I + V2V — Instantes al 25%, 50%, 75% y 100%")
 

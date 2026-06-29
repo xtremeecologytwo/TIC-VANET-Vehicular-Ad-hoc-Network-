@@ -19,7 +19,8 @@ import subprocess
 import xml.etree.ElementTree as ET
 
 
-def generar_sumocfg(output_dir: str, tiempo_simulacion: float = 100.0) -> str:
+def generar_sumocfg(output_dir: str, tiempo_simulacion: float = 100.0,
+                    periodo_fcd: float = 1.0) -> str:
     """
     Genera el archivo de configuración SUMO (.sumocfg) necesario para
     ejecutar la simulación de tráfico.
@@ -33,6 +34,11 @@ def generar_sumocfg(output_dir: str, tiempo_simulacion: float = 100.0) -> str:
                           Debe ser >= al tiempo de salida del último vehículo
                           en las rutas, más el tiempo que tarda en completar
                           su ruta, para capturar todo el movimiento.
+        periodo_fcd: Cada cuántos segundos SUMO escribe la posición de los
+                          vehículos en el FCD. Por defecto 1.0 (cada segundo).
+                          Si el muestreo es por minutos (ej. 120 s = 2 min),
+                          conviene igualarlo para que el fcd.xml no sea enorme:
+                          SUMO solo escribe en t = 0, periodo, 2·periodo, ...
 
     Retorna:
         Ruta absoluta al archivo .sumocfg generado.
@@ -66,10 +72,17 @@ def generar_sumocfg(output_dir: str, tiempo_simulacion: float = 100.0) -> str:
         <end value="{tiempo_simulacion}"/>
     </time>
 
-    <!-- Salida FCD: posición de cada vehículo en cada timestep -->
+    <!-- Salida FCD: posición de cada vehículo. device.fcd.period controla
+         cada cuántos segundos se registra la posición (alineado al reloj
+         global: t = 0, periodo, 2·periodo, ...), para que el muestreo por
+         minutos no genere un archivo gigante y todos los autos queden
+         registrados en los MISMOS instantes (necesario para las matrices). -->
     <output>
         <fcd-output value="{os.path.basename(fcd_path)}"/>
     </output>
+    <processing>
+        <device.fcd.period value="{periodo_fcd}"/>
+    </processing>
 
     <!-- Configuración del reporte: suprimir warnings para ejecución limpia -->
     <report>
@@ -87,7 +100,8 @@ def generar_sumocfg(output_dir: str, tiempo_simulacion: float = 100.0) -> str:
 
 
 def ejecutar_simulacion_sumo(output_dir: str,
-                              tiempo_simulacion: float = 100.0) -> tuple[str | None, str | None]:
+                              tiempo_simulacion: float = 100.0,
+                              periodo_fcd: float = 1.0) -> tuple[str | None, str | None]:
     """
     Ejecuta la simulación de tráfico SUMO y genera el archivo FCD.
 
@@ -110,7 +124,7 @@ def ejecutar_simulacion_sumo(output_dir: str,
         (None, mensaje_error) si hubo error.
     """
     # Paso 1: Generar el archivo de configuración
-    cfg_path = generar_sumocfg(output_dir, tiempo_simulacion)
+    cfg_path = generar_sumocfg(output_dir, tiempo_simulacion, periodo_fcd)
     fcd_path = os.path.join(output_dir, "fcd.xml")
 
     # Paso 2: Ejecutar SUMO como subproceso
@@ -124,7 +138,7 @@ def ejecutar_simulacion_sumo(output_dir: str,
             check=True,
             capture_output=True,
             text=True,
-            timeout=300,  # 5 minutos máximo para simulaciones largas
+            timeout=600,  # 10 minutos máximo para simulaciones largas (ej. 2-3 h)
             cwd=output_dir  # Ejecutar desde el directorio de salida
         )
     except FileNotFoundError:
@@ -136,7 +150,7 @@ def ejecutar_simulacion_sumo(output_dir: str,
     except subprocess.CalledProcessError as e:
         return None, f"Error en la simulación SUMO:\n{e.stderr[:500]}"
     except subprocess.TimeoutExpired:
-        return None, "La simulación SUMO excedió el tiempo máximo (5 minutos)."
+        return None, "La simulación SUMO excedió el tiempo máximo (10 minutos)."
 
     # Paso 3: Verificar que el FCD se generó
     if not os.path.isfile(fcd_path):

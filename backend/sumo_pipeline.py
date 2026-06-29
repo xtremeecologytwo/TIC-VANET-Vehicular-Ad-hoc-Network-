@@ -156,7 +156,7 @@ def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output",
     try:
         subprocess.run(
             cmd_random_trips, check=True,
-            capture_output=True, text=True, timeout=120
+            capture_output=True, text=True, timeout=300
         )
         resultados.append({
             "paso": "randomTrips",
@@ -183,7 +183,7 @@ def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output",
         resultados.append({
             "paso": "randomTrips",
             "exito": False,
-            "mensaje": "randomTrips excedió el tiempo de espera (120s)."
+            "mensaje": "randomTrips excedió el tiempo de espera (300s)."
         })
     
     return resultados

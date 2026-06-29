@@ -11,13 +11,20 @@
     <!-- Duración de la simulación -->
     <time>
         <begin value="0"/>
-        <end value="10800"/>
+        <end value="3660"/>
     </time>
 
-    <!-- Salida FCD: posición de cada vehículo en cada timestep -->
+    <!-- Salida FCD: posición de cada vehículo. device.fcd.period controla
+         cada cuántos segundos se registra la posición (alineado al reloj
+         global: t = 0, periodo, 2·periodo, ...), para que el muestreo por
+         minutos no genere un archivo gigante y todos los autos queden
+         registrados en los MISMOS instantes (necesario para las matrices). -->
     <output>
         <fcd-output value="fcd.xml"/>
     </output>
+    <processing>
+        <device.fcd.period value="120.0"/>
+    </processing>
 
     <!-- Configuración del reporte: suprimir warnings para ejecución limpia -->
     <report>

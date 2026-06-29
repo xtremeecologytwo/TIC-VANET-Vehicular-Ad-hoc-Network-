@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sumo -n output/mapa.net.xml -r output/mapa.rou.xml --fcd-output test_fcd_period.xml --device.fcd.period 120 --end 1200 --no-warnings --no-step-log)",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(rm -f test_fcd_period.xml)"
+    ]
+  }
+}
