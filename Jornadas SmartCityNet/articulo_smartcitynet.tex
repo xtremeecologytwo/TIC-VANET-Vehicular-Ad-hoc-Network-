@@ -1,0 +1,625 @@
+%==================================================================================
+%  articulo_smartcitynetV3.tex   ---  SmartCityNet, Version 3 (English, B1--B2)
+%
+%  "A Web Platform for Generating Optimization-Ready V2V/V2I Connectivity Data
+%   from SUMO Vehicular Scenarios"
+%
+%  Base:  el CUERPO/estructura viene de SmartCityNet_V3.tex y de
+%         SmartCityNet_V3_Context.md; el PREÁMBULO usa el de articulo_smartcitynetV2
+%         (probado, compila con la clase MDPI). Escrito con tono directo/humanizado.
+%----------------------------------------------------------------------------------
+%  >>> NECESITAS la carpeta  Definitions/  al lado de este .tex (clase MDPI).  <<<
+%  Convención de colores de revisión (heredada de la V3):
+%    negro  = contenido traducido/revisado del manuscrito original.
+%    azul   = \added{...}  adiciones técnicas aceptadas en la revisión V2->V3.
+%    rojo   = \todo{...}   evidencia, medidas, referencias o metadatos PENDIENTES.
+%==================================================================================
+\documentclass[engproc,proceedingpaper,submit,oneauthor]{Definitions/mdpi}
+
+%------------------------------ MDPI internal (no modificar) -----------------------
+\firstpage{1}
+\makeatletter
+\setcounter{page}{\@firstpage}
+\makeatother
+\pubvolume{1}
+\issuenum{1}
+\articlenumber{0}
+\pubyear{2026}
+\copyrightyear{2026}
+\datereceived{ }
+\dateaccepted{ }
+\datepublished{ }
+
+%============================== Paquetes adicionales ===============================
+% La clase MDPI ya carga: amsmath, amssymb, amsthm, booktabs, graphicx, xcolor,
+% colortbl, float, tikz, array, tabularx, hyperref, natbib, etc. Solo se añade lo
+% imprescindible que NO trae la clase.
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc,fit,backgrounds}
+
+% ---- Colores y marcas de revisión ----
+\definecolor{revisionblue}{RGB}{0,70,170}
+\definecolor{todored}{RGB}{185,0,0}
+\definecolor{softgray}{RGB}{246,247,249}
+\newcommand{\added}[1]{{\color{revisionblue}#1}}
+\newcommand{\todo}[1]{{\color{todored}\textbf{[TO DO: #1]}}}
+
+% ---- Atajos matemáticos ----
+\newcommand{\Atil}{\widetilde{A}}
+\newcommand{\bin}[1]{\beta\!\left(#1\right)}
+\newcommand{\nnz}{\operatorname{nnz}}
+\newcommand{\CVR}{\mathrm{CVR}}
+
+%============================== Portada / metadatos ================================
+\Title{A Web Platform for Generating Optimization-Ready V2V/V2I Connectivity Data
+	from SUMO Vehicular Scenarios}
+
+\newcommand{\orcidauthorA}{0000-0000-0000-000X}
+
+\Author{Edison Xavier Espinel Sevilla $^{1,}$*\orcidA{}}
+
+\AuthorNames{Edison Xavier Espinel Sevilla}
+
+\address{%
+	$^{1}$ \quad Escuela Politécnica Nacional, Quito, Ecuador; edison.espinel@epn.edu.ec}
+
+\corres{Correspondence: edison.espinel@epn.edu.ec}
+
+% Abstract (sin líneas en blanco). En la clase MDPI \abstract es un COMANDO.
+\abstract{Roadside-unit (RSU) deployment models need data that tell which vehicles
+	can reach each candidate RSU, in which mobility snapshot, and with how many hops.
+	Producing these data is not trivial: it means putting together traffic mobility,
+	urban geometry, direct-link evaluation, graph processing, and optimization-oriented
+	data structures. This paper presents a web platform that turns a geographical area
+	and a SUMO mobility scenario into an optimization-ready connectivity dataset. The
+	backend integrates OpenStreetMap and SUMO tools, filters candidate RSU positions,
+	evaluates binary V2V and V2I links from communication range and building
+	obstruction, and computes cumulative and minimum-hop connectivity through a matrix
+	recurrence. \added{A formal proposition shows that the recurrence finds every
+		vehicle--RSU path within a given hop limit, while first-arrival matrices identify
+		its minimum hop count. The resulting sparse tuple set lists each reachable real RSU
+		at its minimum hop, plus an always-available artificial no-service option for every
+		vehicle.} The Streamlit frontend supports scenario configuration, execution,
+	visualization, and export. The platform is evaluated in a real urban area of the
+	Historic Centre of Quito by varying the minimum junction degree and the spatial
+	clustering radius used to build the candidate RSU set. \todo{Insert the verified
+		range of retained candidates and reduction percentages for the final parameter
+		configurations.} The workflow separates mobility simulation from infrastructure
+	optimization, so the same generated dataset can be reused by different exact or
+	heuristic deployment models.}
+
+\keyword{VANET; V2V connectivity; V2I connectivity; SUMO; multi-hop connectivity;
+	roadside units; preprocessing; facility location; operations research}
+
+%==================================================================================
+\begin{document}
+	
+	%----------------------------------------------------------------------------------
+	\section{Introduction}
+	
+	Vehicular ad hoc networks (VANETs) enable direct vehicle-to-vehicle (V2V)
+	communication and communication between vehicles and fixed roadside infrastructure
+	(V2I). This infrastructure is usually a set of roadside units (RSUs) installed at
+	selected locations, such as road intersections. Where these units are placed affects
+	communication coverage, path length, infrastructure cost, and the operational
+	performance of the network. For this reason, RSU deployment is often stated as a
+	facility-location problem and solved with exact, heuristic, or metaheuristic methods.
+	
+	Deployment models need connectivity information \emph{before} the optimization
+	starts. In particular, they need to know which vehicles can reach each candidate RSU
+	in each mobility snapshot, and the minimum number of relay hops required. Generating
+	this information is not a minor preprocessing step. It combines traffic simulation,
+	extraction of vehicle positions, a representation of the urban geometry,
+	communication-range checks, obstacle detection, graph processing, and conversion into
+	the structures that an optimization solver accepts. Even so, many deployment studies
+	treat these data as already available and describe their generation only briefly.
+	
+	The software side tells a similar story. SUMO offers microscopic traffic simulation
+	and tools to import OpenStreetMap (OSM) networks, while Python libraries provide
+	geographical interfaces, data analysis, and visualization. These pieces are usually
+	glued together with independent scripts, which hurts reproducibility and makes it
+	hard to reuse the same scenario-generation process across alternative optimization
+	formulations.
+	
+	This work fills that gap with a web-based preprocessing layer that follows the
+	sequence
+	\[
+	\begin{aligned}
+		\text{urban area}&\rightarrow\text{SUMO snapshots}\rightarrow\text{candidate RSUs}
+		\rightarrow\text{V2V/V2I matrices}\\
+		&\rightarrow\text{minimum-hop tuples}\rightarrow\text{optimization input}.
+	\end{aligned}
+	\]
+	\added{The main output is not just a collection of connectivity matrices. It is a
+		traceable dataset that keeps the relation between geographical positions, SUMO
+		identifiers, matrix indices, mobility snapshots, hop counts, and optimization
+		identifiers.}
+	
+	The contributions are:
+	\begin{enumerate}
+		\item a web platform that integrates a Streamlit frontend with a Python/SUMO backend
+		in a reproducible workflow;
+		\item automatic generation of direct V2V and V2I connectivity matrices under a binary
+		communication-range and line-of-sight (LoS) model;
+		\item a configurable two-stage method that reduces the number of candidate RSU
+		positions using junction degree and spatial clustering;
+		\item computation of cumulative and minimum-hop vehicle--RSU connectivity matrices;
+		\item export of optimization-ready dense structures and sparse tuples, including an
+		artificial no-service option for every vehicle;
+		\added{\item a formal correctness result for the multi-hop recurrence and the
+			minimum-hop representation;}
+		\added{\item a sensitivity analysis of how the minimum degree and the clustering
+			radius change the number of retained RSU candidates.}
+	\end{enumerate}
+	
+	The optimization model that picks the final deployment is out of scope here. The goal
+	is to generate its input data automatically and independently of any specific
+	formulation. The rest of the paper is organized as follows. Section~\ref{sec:related}
+	reviews RSU placement and SUMO-based tools. Section~\ref{sec:method} presents the
+	platform and the connectivity-data methodology. Section~\ref{sec:results} reports the
+	experimental setup and results. Section~\ref{sec:conclusions} concludes and lists
+	future work.
+	
+	%----------------------------------------------------------------------------------
+	\section{Related Work}\label{sec:related}
+	
+	\subsection{RSU Deployment and Facility-Location Models}
+	RSU deployment has been studied through covering, median, routing, and stochastic
+	formulations. Maximal-covering models try to cover the largest demand with a limited
+	number of RSUs; set-covering models minimize how many units are needed to satisfy
+	coverage; and median-type models reduce the average distance or hop count.
+	Mobility-aware formulations extend these ideas over several traffic snapshots. The
+	stochastic model in~\citep{ref-urquiza} uses scenario-dependent connectivity tuples
+	and adds an artificial disconnected RSU as a no-service alternative that keeps the
+	problem feasible when a vehicle cannot, or should not, be assigned to a deployed real
+	RSU.
+	
+	Despite their differences, all of these formulations rely on a common data layer:
+	candidate RSUs, vehicle sets, mobility scenarios, and feasible vehicle--RSU
+	relationships. This work focuses on producing exactly that layer. \todo{Complete
+		this subsection with recent studies on mobility-aware RSU placement, multi-hop
+		access, and exact or heuristic deployment. Every added reference must be cited in the
+		text.}
+	
+	\subsection{SUMO-Based Platforms and Web Interfaces}
+	SUMO is an open-source microscopic traffic simulator with utilities to import OSM
+	networks, generate vehicle trips, run simulations, and export floating-car data
+	(FCD)~\citep{ref-sumo,ref-osm}. Streamlit and Folium support interactive Python web
+	interfaces and geographical visualization~\citep{ref-streamlit,ref-folium}. Their
+	individual capabilities are not, by themselves, the contribution of this work. The
+	contribution is their orchestration together with candidate filtering, geometric
+	direct-link evaluation, multi-hop processing, identifier traceability, and export to
+	optimization models.
+	
+	Existing SUMO-based applications often focus on simulation control or visualization.
+	This platform instead treats simulation as the first stage of a data-generation
+	process whose final output can be consumed by facility-location and network-design
+	formulations. \todo{Add a short comparison with the closest scientific platforms,
+		considering mobility simulation, obstacle-aware V2V/V2I generation, multi-hop
+		processing, web interaction, optimization export, and reproducibility.}
+	
+	%----------------------------------------------------------------------------------
+	\section{Web Platform and Connectivity-Data Generation}\label{sec:method}
+	
+	\subsection{Platform Architecture and Workflow}
+	The platform follows a simplified model--view--controller organization. The Streamlit
+	frontend captures the geographical area and the configurable parameters, starts the
+	processing workflow, and displays maps, matrices, and summary indicators. The Python
+	backend prepares the SUMO scenario, extracts mobility snapshots, filters candidate
+	RSUs, evaluates direct links, computes multi-hop reachability, and exports the
+	resulting dataset. An orchestrator coordinates the modules and stores the
+	configuration used in each run.
+	
+	Figure~\ref{fig:architecture} summarizes the architecture. The workflow starts when
+	the user selects a geographical bounding box. OSM data are converted into a SUMO road
+	network and building polygons with \texttt{netconvert} and \texttt{polyconvert}.
+	Vehicle demand is generated with \texttt{randomTrips.py}, and the simulation produces
+	FCD snapshots. The processing engine then evaluates direct V2V/V2I links, computes
+	the multi-hop relations, and exports the optimization data.
+	
+	\begin{figure}[H]
+		\centering
+		\begin{tikzpicture}[
+			font=\footnotesize,
+			box/.style={draw=gray!55,rounded corners=2pt,align=center,inner sep=4pt,
+				minimum height=8mm,fill=softgray},
+			main/.style={box,fill=blue!6},
+			arr/.style={-{Latex[length=1.8mm]},gray!70,line width=.7pt}
+			]
+			\node[main] (ui) {Streamlit frontend\\area and parameters};
+			\node[box,right=6mm of ui] (orc) {Orchestrator\\config.\ and traceability};
+			\node[box,right=6mm of orc] (sumo) {OSM/SUMO\\network, polygons, FCD};
+			\node[box,below=8mm of sumo] (links) {Connectivity engine\\candidate RSUs, LoS, $A_s$, $B_s$};
+			\node[box,left=6mm of links] (hop) {Multi-hop engine\\$R_{s,h}$, $S_{s,h}$};
+			\node[main,left=6mm of hop] (out) {Optimization-ready output\\matrices and $\CVR$ tuples};
+			\draw[arr] (ui)--(orc); \draw[arr] (orc)--(sumo); \draw[arr] (sumo)--(links);
+			\draw[arr] (links)--(hop); \draw[arr] (hop)--(out);
+			\draw[arr] (out.west) -| ++(-4mm,13mm) |- (ui.north);
+		\end{tikzpicture}
+		\caption{Platform architecture and end-to-end data-generation workflow.}
+		\label{fig:architecture}
+	\end{figure}
+	
+	The main configurable groups are: (i) mobility parameters, including the bounding
+	box, simulation duration, vehicle-generation settings, snapshot interval, and random
+	seed; (ii) candidate-selection parameters, that is, the minimum junction degree
+	$g_{\min}$ and the clustering radius $\rho$; (iii) communication parameters, namely
+	the V2V and V2I ranges and whether building obstruction is used; and (iv) the maximum
+	hop count $H$. \todo{Confirm the complete list and default values exposed by the
+		current interface.}
+	
+	\subsection{Candidate RSU Selection}
+	SUMO can produce a large set of junctions, including intermediate road points,
+	internal nodes, and closely located intersections. Using all of them as deployment
+	candidates enlarges the optimization search space and adds nearly equivalent
+	positions. The platform therefore applies a two-stage reduction.
+	
+	First, it computes the topological degree of each non-internal junction and keeps
+	only nodes whose degree is at least $g_{\min}$. Second, it sorts the surviving nodes
+	by decreasing degree and runs greedy spatial clustering: a node becomes a candidate
+	only when its distance to every previously accepted candidate is greater than $\rho$.
+	Because higher-degree nodes are processed first, they represent their local groups.
+	
+	\begin{algorithm}[H]
+		\caption{Candidate RSU filtering by degree and greedy spatial clustering}
+		\label{alg:candidates}
+		\KwIn{Junction set $J$, non-internal edge set $E$, minimum degree $g_{\min}$,
+			clustering radius $\rho$}
+		\KwOut{Candidate RSU set $C$}
+		Initialize $\deg(j)\leftarrow 0$ for all $j\in J$\;
+		\ForEach{$(u,v)\in E$}{increment $\deg(u)$ and $\deg(v)$\;}
+		$F\leftarrow\{\,j\in J:\deg(j)\ge g_{\min}\,\}$\;
+		Sort $F$ by non-increasing degree\;
+		$C\leftarrow\emptyset$\;
+		\ForEach{$j\in F$}{
+			\If{$C=\emptyset$ \textbf{or} $\min_{c\in C}\operatorname{dist}(j,c)>\rho$}{
+				$C\leftarrow C\cup\{j\}$\;
+			}
+		}
+		\Return{$C$}\;
+	\end{algorithm}
+	
+	This procedure is a preprocessing heuristic, not an optimal RSU-placement algorithm.
+	Its purpose is to build a manageable candidate set before the deployment model is
+	solved. Since it may drop a location that would later be useful, the sensitivity of
+	the retained set to $(g_{\min},\rho)$ has to be reported instead of hiding these
+	choices as fixed constants.
+	
+	\subsection{Direct and Multi-Hop Connectivity}
+	For each snapshot $s\in\mathcal S$, let $\mathcal V_s=\{v_1,\ldots,v_{n_s}\}$ be the
+	active vehicles and $\mathcal R=\{r_1,\ldots,r_m\}$ the candidate RSUs. The binary
+	V2V matrix $A_s\in\{0,1\}^{n_s\times n_s}$ has $(A_s)_{ij}=1$ when vehicles $v_i$ and
+	$v_j$ are within the V2V range and the segment joining them is not blocked by a
+	building polygon. Under the assumed bidirectional-link model the matrix is symmetric.
+	The binary V2I matrix $B_s\in\{0,1\}^{n_s\times m}$ has $(B_s)_{ik}=1$ when vehicle
+	$v_i$ can directly reach candidate RSU $r_k$ under the V2I range and the LoS
+	condition.
+	
+	Building obstruction is tested with a two-dimensional segment--polygon intersection
+	check. Candidate pairs are first filtered by communication range and by bounding
+	boxes; the link segment is then tested against the relevant building edges. This
+	yields a geometric binary approximation of connectivity. It does not model signal
+	attenuation, fading, interference, or packet-delivery probability.
+	
+	A vehicle without direct V2I access may still reach an RSU through other vehicles.
+	Define the augmented adjacency matrix
+	\[
+	\Atil_s=\bin{A_s+I},
+	\]
+	where $\beta(X)$ maps every positive entry of $X$ to one and every zero entry to
+	zero. Cumulative connectivity is
+	\begin{align}
+		R_{s,1} &= B_s,\label{eq:r1}\\
+		R_{s,h} &= \bin{\Atil_s R_{s,h-1}},\qquad h=2,\ldots,H.\label{eq:rh}
+	\end{align}
+	The identity term keeps the paths already found at smaller hop counts, which gives
+	$R_{s,1}\le R_{s,2}\le\cdots\le R_{s,H}$ elementwise. The first-arrival matrices are
+	\begin{align}
+		S_{s,1}&=R_{s,1},\\
+		S_{s,h}&=R_{s,h}-R_{s,h-1},\qquad h=2,\ldots,H.\label{eq:sh}
+	\end{align}
+	
+	\begin{Proposition}\label{prop:reachability}
+		For any snapshot $s$, $(R_{s,h})_{ik}=1$ if and only if there is a path from vehicle
+		$v_i$ to candidate RSU $r_k$ using at most $h$ communication hops, where the final
+		hop is V2I and every previous hop is V2V.
+	\end{Proposition}
+	
+	\begin{proof}
+		The result follows by induction on $h$. For $h=1$, $R_{s,1}=B_s$, so an entry is one
+		exactly for a direct V2I link. Assume the statement holds for $h-1$. The entry
+		$(\Atil_s R_{s,h-1})_{ik}$ is positive if there is an index $j$ with
+		$(\Atil_s)_{ij}=1$ and $(R_{s,h-1})_{jk}=1$. If $j=i$, the identity term keeps a path
+		of at most $h-1$ hops. If $j\neq i$, then $(A_s)_{ij}=1$ adds one V2V hop from $v_i$
+		to $v_j$ before a path of at most $h-1$ hops from $v_j$ to $r_k$. Conversely, every
+		path of at most $h$ hops either already has at most $h-1$ hops or begins with one V2V
+		hop followed by such a path. Binarization therefore gives exactly the stated
+		reachability relation.
+	\end{proof}
+	
+	\begin{Corollary}\label{cor:minhop}
+		For $h\ge 2$, $(S_{s,h})_{ik}=1$ if and only if the minimum number of hops from $v_i$
+		to $r_k$ is exactly $h$. For $h=1$, $S_{s,1}=B_s$ identifies the direct connections.
+	\end{Corollary}
+	
+	The corollary follows from Proposition~\ref{prop:reachability} and the monotonicity of
+	$R_{s,h}$: each reachable vehicle--RSU pair appears for the first time at a single hop
+	value only. Figure~\ref{fig:matrices} gives a compact example, where purple cells mark
+	the first arrival at the corresponding hop.
+	
+	\begin{figure}[H]
+		\centering
+		\newcommand{\hc}[1]{\ifnum#1=1\cellcolor{violet!60}\textcolor{white}{1}\else\cellcolor{gray!8}0\fi}
+		\small
+		\begin{tabular}{c@{\hskip 6mm}c@{\hskip 6mm}c}
+			\begin{tabular}{c|ccc}
+				$R_3$ & $r_1$ & $r_2$ & $r_3$\\\hline
+				$v_1$ & \hc1 & \hc1 & \hc1\\
+				$v_2$ & \hc1 & \hc1 & \hc1\\
+				$v_3$ & \hc1 & \hc1 & \hc1\\
+				$v_4$ & \hc0 & \hc0 & \hc0
+			\end{tabular}&
+			\begin{tabular}{c|ccc}
+				$S_2$ & $r_1$ & $r_2$ & $r_3$\\\hline
+				$v_1$ & \hc0 & \hc0 & \hc1\\
+				$v_2$ & \hc1 & \hc1 & \hc0\\
+				$v_3$ & \hc0 & \hc0 & \hc1\\
+				$v_4$ & \hc0 & \hc0 & \hc0
+			\end{tabular}&
+			\begin{tabular}{c|ccc}
+				$S_3$ & $r_1$ & $r_2$ & $r_3$\\\hline
+				$v_1$ & \hc0 & \hc1 & \hc0\\
+				$v_2$ & \hc0 & \hc0 & \hc0\\
+				$v_3$ & \hc1 & \hc0 & \hc0\\
+				$v_4$ & \hc0 & \hc0 & \hc0
+			\end{tabular}
+		\end{tabular}
+		\caption{Illustrative cumulative and first-arrival matrices for $H=3$. Vehicle $v_4$
+			cannot reach any real RSU within the hop limit.}\label{fig:matrices}
+	\end{figure}
+	
+	Equations~\eqref{eq:r1}--\eqref{eq:sh} use ordinary dense matrix multiplication
+	followed by thresholding. \added{A Boolean-semiring implementation could reduce the
+		average computational effort by avoiding unnecessary integer accumulation, but it does
+		not change the dense worst-case order. Its implementation and comparison are left as
+		future work.}
+	
+	\subsection{Optimization-Oriented Export and Cardinality}
+	Let
+	\[
+	K_s=\sum_{h=1}^{H}\nnz(S_{s,h})=\nnz(R_{s,H})
+	\]
+	be the number of reachable real vehicle--RSU pairs in snapshot $s$. The export module
+	creates one tuple for each real pair at its minimum hop count and one artificial
+	no-service tuple for every active vehicle:
+	\[
+	\CVR_s=
+	\{\langle s,h,i,k\rangle:(S_{s,h})_{ik}=1\}
+	\cup
+	\{\langle s,H+1,i,r_\infty\rangle:i\in\mathcal V_s\}.
+	\]
+	
+	The artificial RSU $r_\infty$ does not mean only that a vehicle is physically
+	disconnected. It represents the optimization alternative of leaving that vehicle
+	unserved because real candidates may not be deployed, may be saturated, or may be
+	rejected due to cost or other constraints. For this reason the tuple is included even
+	when the same vehicle can reach one or more real RSUs.
+	
+	The cardinality is
+	\[
+	|\CVR_s|=K_s+n_s,
+	\]
+	and, for $m\ge 1$,
+	\[
+	n_s\le |\CVR_s|\le n_s(m+1).
+	\]
+	The factor $H$ does not multiply the maximum number of real tuples, because each
+	reachable pair $(i,k)$ is exported once, at its minimum hop. Across all snapshots,
+	\[
+	\sum_{s\in\mathcal S}n_s\le |\CVR|\le(m+1)\sum_{s\in\mathcal S}n_s.
+	\]
+	
+	The same information can be written to an OPL/\texttt{.dat} file or kept as in-memory
+	structures for other solvers. \todo{Confirm the exact final tuple-field names, the
+		artificial-RSU identifier, the penalty convention, and the repository example used by
+		the optimization model.}
+	
+	%----------------------------------------------------------------------------------
+	\section{Experimental Results}\label{sec:results}
+	
+	\subsection{Experimental Settings}
+	The evaluation uses one real scenario in the Historic Centre of Quito, Ecuador. The
+	goal is not to compare different cities, but to measure how the candidate-generation
+	parameters change the size of the optimization search space while the road network
+	stays fixed. The two factors are the minimum junction degree $g_{\min}$ and the greedy
+	clustering radius $\rho$.
+	
+	The original manuscript reports 620 SUMO junctions and a preliminary filtered set of
+	160 candidates for one configuration, i.e.\ an approximate 74\% reduction. These
+	values are kept as preliminary evidence and must be reproduced from the final code
+	before submission. The sensitivity analysis uses a compact set of configurations,
+	such as those in Table~\ref{tab:configs}; the exact values may be adjusted to match
+	the implemented interface.
+	
+	\begin{table}[H]
+		\centering
+		\caption{Proposed parameter configurations for candidate-set sensitivity.}
+		\label{tab:configs}
+		\begin{tabular}{cccl}
+			\toprule
+			Configuration & $g_{\min}$ & $\rho$ (m) & Purpose\\
+			\midrule
+			A & 3 & 15 & permissive degree, local clustering\\
+			B & 3 & 20 & effect of a larger radius\\
+			C & 4 & 20 & reference configuration\\
+			D & 5 & 25 & restrictive degree, wider clustering\\
+			\bottomrule
+		\end{tabular}
+	\end{table}
+	
+	For every configuration, the experiment reports the original number of eligible SUMO
+	junctions $X$, the number of retained candidates $Y$, and the reduction
+	\[
+	\operatorname{Reduction}(\%)=100\left(1-\frac{Y}{X}\right).
+	\]
+	The runs must use the same downloaded network and the same rules for excluding
+	internal nodes, which isolates the effect of $(g_{\min},\rho)$. \todo{Record the map
+		source date, the geographical bounding box, the SUMO version, the Python version, the
+		hardware, and the exact random seed.}
+	
+	\subsection{Results}
+	Table~\ref{tab:sensitivity} is the final reporting structure. It deliberately leaves
+	unverified measurements in red instead of filling them with invented values.
+	
+	\begin{table}[H]
+		\centering
+		\caption{Candidate-set sensitivity in the Historic Centre scenario.}
+		\label{tab:sensitivity}
+		\begin{tabular}{cccccc}
+			\toprule
+			Config. & $g_{\min}$ & $\rho$ (m) & Original $X$ & Retained $Y$ & Reduction (\%)\\
+			\midrule
+			A & 3 & 15 & \todo{measure} & \todo{measure} & \todo{compute}\\
+			B & 3 & 20 & \todo{measure} & \todo{measure} & \todo{compute}\\
+			C & 4 & 20 & 620\textsuperscript{*} & 160\textsuperscript{*} & 74.2\textsuperscript{*}\\
+			D & 5 & 25 & \todo{measure} & \todo{measure} & \todo{compute}\\
+			\bottomrule
+			\multicolumn{6}{l}{\footnotesize \textsuperscript{*}Preliminary value inherited from
+				the original manuscript; final reproduction required.}
+		\end{tabular}
+	\end{table}
+	
+	The expected monotonic tendencies are clear, but should not be reported as measured
+	findings until the runs are done. Raising $g_{\min}$ removes low-degree junctions
+	before clustering. Raising $\rho$ suppresses candidates located close to a previously
+	retained higher-degree node. Stronger values therefore normally reduce $Y$, although
+	the marginal effect depends on the spatial distribution and the degree structure of
+	the fixed road network.
+	
+	A compact final figure should plot the retained candidates and the reduction
+	percentage against the four configurations. A second map may compare the least and
+	the most restrictive configurations if it clearly reveals the spatial effect without
+	repeating the architecture figure. \todo{Insert the final plot(s) generated from the
+		verified sensitivity table.}
+	
+	The preliminary reference configuration reduces the candidate set from 620 to 160
+	positions. If reproduced, this means the deployment model considers about one quarter
+	of the original junctions. That matters in practice, because binary deployment
+	variables and many assignment or routing structures grow with the number of candidate
+	facilities. Still, candidate reduction is not the same as optimization quality: a
+	smaller candidate set can speed up the model while excluding useful locations. The
+	final paper should therefore describe the reduction as a preprocessing trade-off, not
+	as proof of a better deployment.
+	
+	The platform also completed the end-to-end transformation from SUMO snapshots to
+	matrix and tuple outputs in the supplied case study. The source manuscript reports 132
+	vehicles, 31 snapshots, and 1710 connectivity tuples, but these figures need a
+	consistent rerun, because one reported RSU-related range was inconsistent with the
+	filtered candidate count. \todo{Verify the number of vehicles, snapshots, real tuples,
+		artificial tuples, and total $|\CVR|$ under the final configuration.}
+	
+	The current implementation has three main limitations. First, its binary geometric
+	link model ignores path loss, multipath fading, interference, channel load, and
+	packet-level reliability. Second, every snapshot is processed independently, so the
+	recurrence describes paths \emph{inside} a snapshot and not time-respecting
+	store-carry-forward routes. Third, candidate filtering is heuristic, and its effect on
+	the objective value of a later deployment model has not been quantified yet. These
+	limitations set the meaning of the generated data and motivate the future work below.
+	
+	%----------------------------------------------------------------------------------
+	\section{Conclusions and Future Work}\label{sec:conclusions}
+	
+	This paper presented a web platform that turns a geographical area and SUMO mobility
+	output into optimization-ready V2V/V2I connectivity data. The workflow puts together
+	candidate RSU generation, direct-link evaluation with building obstruction, cumulative
+	and minimum-hop matrix processing, traceable identifiers, visualization, and export.
+	The formal result shows that the recurrence finds every vehicle--RSU relation
+	reachable within the hop limit, while the first-arrival matrices assign each real pair
+	its minimum hop count.
+	
+	The exported sparse set contains all reachable real options and one artificial
+	no-service option per vehicle. This distinction matters, because the artificial RSU
+	stands for an optimization decision, not only physical disconnection. The resulting
+	cardinality is $K_s+n_s$, bounded by $n_s$ and $n_s(m+1)$ for each snapshot.
+	
+	The experimental design focuses on one urban scenario and looks at how sensitive the
+	candidate reduction is to the minimum junction degree and the clustering radius.
+	Preliminary values point to a substantial reduction in the Historic Centre of Quito,
+	but the final paper must replace the inherited figures with reproducible measurements
+	and report the parameter-dependent trade-off explicitly.
+	
+	Future work includes comparing the recurrence against breadth-first-search
+	implementations, testing sparse and Boolean-semiring matrix kernels, and measuring
+	when the connectivity matrices become dense. Another direction is to generate feasible
+	tuples dynamically inside the optimization method, for example through decomposition or
+	column generation, instead of materializing the whole preprocessing output. The
+	communication model should also gain propagation and reliability information, and the
+	influence of candidate filtering on final deployment cost, coverage, capacity, and
+	solution time should be validated.
+	
+	%----------------------------------------------------------------------------------
+	\vspace{6pt}
+	
+	\authorcontributions{Conceptualization, methodology, software, validation,
+		writing---original draft preparation, and writing---review and editing, E.X.E.S.
+		\todo{Update if additional authors or contributors are included.}}
+	
+	\funding{\todo{Insert the SmartCityNet project name, grant identifier, and funding
+			institution, or state that the research received no external funding.}}
+	
+	\dataavailability{\todo{Insert the final code repository and dataset link, together
+			with the configuration files needed to reproduce the Historic Centre scenario.}}
+	
+	\acknowledgments{\todo{Insert the institutional acknowledgments and verify the venue
+			policy for disclosure of AI-assisted editing.}}
+	
+	\conflictsofinterest{The author declares no conflict of interest.}
+	
+	\abbreviations{Abbreviations}{%
+		The following abbreviations are used in this manuscript:\\
+		
+		\noindent
+		\begin{tabular}{@{}ll}
+			VANET & Vehicular Ad hoc Network\\
+			V2V   & Vehicle-to-Vehicle\\
+			V2I   & Vehicle-to-Infrastructure\\
+			RSU   & Road Side Unit\\
+			OBU   & On Board Unit\\
+			LoS   & Line of Sight\\
+			FCD   & Floating Car Data\\
+			CVR   & Connectivity tuple set $\langle s,h,i,k\rangle$\\
+			SUMO  & Simulation of Urban MObility\\
+			OSM   & OpenStreetMap
+		\end{tabular}
+	}
+	
+	%----------------------------------------------------------------------------------
+	\reftitle{References}
+	
+	\begin{thebibliography}{999}
+		\bibitem{ref-urquiza}
+		Urquiza-Aguiar, L.; Tripp-Barba, C.; Aguilar-Igartua, M. A Stochastic Optimization
+		Model for the Placement of Road Side Units. In {\em Proceedings of ADHOC-NOW};
+		Springer: Cham, Switzerland, 2016.
+		
+		\bibitem{ref-sumo}
+		Lopez, P.A.; Behrisch, M.; Bieker-Walz, L.; et~al. Microscopic Traffic Simulation
+		using SUMO. In {\em Proceedings of the 21st IEEE International Conference on
+			Intelligent Transportation Systems}; IEEE: Maui, HI, USA, 2018; pp. 2575--2582.
+		
+		\bibitem{ref-osm}
+		OpenStreetMap contributors. OpenStreetMap. Available online:
+		\url{https://www.openstreetmap.org} (accessed on 20 July 2026).
+		
+		\bibitem{ref-streamlit}
+		Streamlit Inc. Streamlit. Available online: \url{https://streamlit.io} (accessed on
+		20 July 2026).
+		
+		\bibitem{ref-folium}
+		Python Visualization. Folium: Python Data, Leaflet.js Maps. Available online:
+		\url{https://python-visualization.github.io/folium/} (accessed on 20 July 2026).
+	\end{thebibliography}
+	% \todo{Add and verify the complete recent related-work bibliography before submission.}
+	
+	\PublishersNote{}
+\end{document}

@@ -22,6 +22,7 @@ Aplicación web que automatiza la generación de escenarios de simulación para 
 - [**Módulo V2V — Conectividad Vehículo-Vehículo**](#-módulo-v2v--conectividad-vehículo-vehículo)
 - [**Matrices de Conectividad**](#-matrices-de-conectividad)
 - [**Módulo Multisalto — Conectividad de varios saltos**](#-módulo-multisalto--conectividad-de-varios-saltos)
+- [**Exportación a la Optimización — El archivo `.dat`**](#-exportación-a-la-optimización--el-archivo-dat)
 - [**Scripts didácticos**](#-scripts-didácticos-para-entender-y-explicar-el-proyecto)
 - [Frontend — Documentación Detallada](#-frontend--documentación-detallada)
 - [Orquestador Principal (app.py)](#-orquestador-principal-apppy)
@@ -67,16 +68,20 @@ El proyecto sigue una arquitectura **MVC simplificada** con separación clara en
 │                          │  │   ├── guardar_tuplas_json()         │
 │                          │  │   ├── generar_tuplas_v2v()      🆕  │
 │                          │  │   └── guardar_tuplas_v2v_json() 🆕  │
-│                          │  └── multisalto.py               🆕🆕 │
-│                          │      ├── agregar_identidad() (Ã=A∨I)   │
-│                          │      ├── construir_matriz_A/B()        │
-│                          │      ├── calcular_R/S/D()              │
-│                          │      ├── calcular_vector_d()           │
-│                          │      └── analizar_timestep()           │
+│                          │  ├── multisalto.py               🆕🆕 │
+│                          │  │   ├── agregar_identidad() (Ã=A∨I)   │
+│                          │  │   ├── construir_matriz_A/B()        │
+│                          │  │   ├── calcular_R/S/D()              │
+│                          │  │   ├── calcular_vector_d()           │
+│                          │  │   └── analizar_timestep()           │
+│                          │  └── exportar_dat.py             🆕🆕 │
+│                          │      ├── construir_datos_opl()         │
+│                          │      ├── escribir_dat() (sintaxis OPL) │
+│                          │      └── exportar_dat_desde_json()     │
 └──────────────────────────┴───────────────────────────────────────┘
                                     │
                                     ▼
-                           📁 output/ (archivos generados)
+                 📁 output/  +  📁 optimizacion/ (archivos generados)
 ```
 
 ---
@@ -167,7 +172,15 @@ El pipeline se ejecuta de forma secuencial cuando el usuario presiona "Generar E
 
 ### Software Obligatorio
 
-1. **Python 3.10+** — Requerido por la sintaxis `tuple[X | None]` (type hints modernas)
+1. **Python 3.10 (recomendado para todo el proyecto en un mismo entorno)** — El código
+   usa type hints modernas (`tuple[X | None]`), por lo que exige **≥ 3.10**; y el
+   **motor completo de CPLEX** (necesario para la optimización real de RSU) solo
+   soporta **≤ 3.10**. Por tanto **Python 3.10 es la única versión que ejecuta todo
+   —backend VANET *y* el solver real— en un solo `.venv`**. El resto de librerías
+   (Streamlit, Folium, NumPy, pandas, matplotlib) soportan 3.10 sin problema. Con
+   Python 3.12/3.14 el backend funciona, pero la optimización queda limitada a la
+   edición Community de CPLEX (solo el micro-ejemplo); ver la
+   [Nota de versión de Python](#-resolución-con-docplexcplex-python-ya-no-oplrun).
 2. **SUMO (Simulation of Urban MObility)** — Suite de simulación de tráfico
    - Descargar desde: https://sumo.dlr.de/docs/Downloads.php
    - Los ejecutables `netconvert` y `polyconvert` **deben estar en el PATH del sistema**
@@ -258,7 +271,14 @@ TIC-VANET-Vehicular-Ad-hoc-Network-/
 │   ├── parsear_xml.py          #    Parseo XML + proyección + filtrado RSU (~300 líneas)
 │   ├── simulacion_sumo.py      # 🆕 Simulación SUMO + parseo FCD (~240 líneas)
 │   ├── visibilidad.py          # 🆕 Algoritmo LoS + tuplas V2I + tuplas V2V (~670 líneas)
-│   └── multisalto.py           # 🆕 Conectividad multisalto R_h, S_h, D_H, d (~430 líneas)
+│   ├── multisalto.py           # 🆕 Conectividad multisalto R_h, S_h, D_H, d (~430 líneas)
+│   └── exportar_dat.py         # 🆕 Puente VANET → optimización: escribe el .dat OPL (~430 líneas)
+│
+├── optimizacion/               # 🧮 Optimización de despliegue de RSU (docplex/CPLEX)
+│   ├── optimizar_rsu.py        # 🆕 Modela y RESUELVE con docplex/CPLEX (Python, ya no oplrun)
+│   ├── rsu_model.mod           #    Modelo OPL de referencia (misma matemática, para docs)
+│   ├── rsu_micro.dat           #    Micro-ejemplo hecho a mano (referencia de formato)
+│   └── rsu_backend.dat         # 🆕 .dat GENERADO desde los datos reales del backend (inspección)
 │
 └── output/                     # 📁 Archivos generados (auto-creado)
     ├── map.osm                 #    Datos crudos de OpenStreetMap
@@ -1307,6 +1327,212 @@ En la pestaña **"🔗 Multisalto"** (dentro de los resultados del Módulo 2) pu
 
 ---
 
+## 🧮 Exportación a la Optimización — El archivo `.dat`
+
+Esta sección documenta [`backend/exportar_dat.py`](backend/exportar_dat.py), el **puente** entre la parte VANET del proyecto (que produce las matrices de conectividad) y la parte de **optimización de despliegue de RSU** que vive en [`optimizacion/`](optimizacion/). La optimización se resuelve con **IBM CPLEX** desde Python vía **`docplex`** (ver [Resolución con docplex/CPLEX](#resolución-con-docplexcplex-python-ya-no-oplrun) más abajo); el archivo `.dat` que genera este módulo sigue siendo útil para inspección y compatibilidad con OPL, pero ya **no** es necesario para resolver.
+
+> ⚠️ **Alcance.** `exportar_dat.py` **solo genera el archivo `.dat`** (y arma en memoria el dict de datos). La resolución la hace [`optimizacion/optimizar_rsu.py`](optimizacion/optimizar_rsu.py) con docplex. Ninguno de los dos está conectado todavía con la interfaz (`app.py`); integrar el resultado (RSU elegidos) en la UI/mapa es el paso pendiente.
+
+### ¿Qué es el `.dat` y por qué se necesita?
+
+El modelo de optimización [`optimizacion/rsu_model.mod`](optimizacion/rsu_model.mod) elige el **subconjunto mínimo de RSU candidatos** que hay que instalar para que los vehículos (en varios instantes/escenarios) alcancen alguna RSU por multisalto, penalizando los caminos largos y la desconexión. Está basado en Urquiza-Aguiar, Tripp-Barba & Aguilar-Igartua (2016), *"A Stochastic Optimization Model for the Placement of RSUs"*.
+
+Ese modelo `.mod` describe la **lógica** (variables, objetivo, restricciones) pero no los **datos**. Los datos concretos de un escenario se pasan en un archivo `.dat` separado, en la sintaxis de OPL. Hasta ahora ese `.dat` existía solo como un **micro-ejemplo hecho a mano** ([`rsu_micro.dat`](optimizacion/rsu_micro.dat), 3 RSU / 4 vehículos / 2 escenarios). Lo que faltaba era **generar ese `.dat` automáticamente desde los datos reales de la simulación**. Eso es justo lo que hace este módulo.
+
+### El flujo de datos completo
+
+```
+tuplas_v2v.json  (Matriz A: V2V)  ─┐
+                                    ├─► multisalto (S_h) ─► CVR ─► rsu_backend.dat ─► (CPLEX)
+tuplas_visibilidad.json (Matriz B) ─┘
+```
+
+1. Se leen los dos JSON que ya deja el backend en `output/`.
+2. Cada **instante de tiempo** de la simulación se convierte en un **escenario `s`** de la optimización (snapshot).
+3. Para cada instante se corre el **multisalto** (`backend/multisalto.py`) y se obtienen sus matrices de **primera aparición `S_h`**.
+4. Cada `1` en `S_h[v][r]` produce una **tupla de conectividad `<s, h, v, r>`** (la clave `CVR` del modelo). Es decir: *en el escenario `s`, el vehículo `v` alcanza el RSU `r` con un mínimo de `h` saltos.*
+5. Se escriben todos los conjuntos y parámetros que el modelo espera y se guarda el `.dat`.
+
+Esta correspondencia "un 1 en `S_h[v][r]` → `<s,h,v,r>`" es exactamente la que pide el comentario de `rsu_model.mod`.
+
+### Traducción de identificadores (backend → OPL)
+
+El backend usa ids de texto (`"V0"`, `"268824778"`) pero OPL trabaja con **conjuntos de enteros**. El módulo traduce y **guarda el mapa inverso** (lo escribe como comentario en la cabecera del `.dat`) para poder interpretar la solución del solver:
+
+| Concepto backend | Concepto OPL | Regla de traducción |
+|------------------|--------------|---------------------|
+| Instante `t` (p. ej. `120.0`) | Escenario `s` (`1, 2, 3, …`) | Se numeran en orden temporal |
+| Vehículo `"V137"` | Vehículo `137` (∈ `V`) | Se toman los dígitos del id |
+| RSU `"268824778"` | RSU `1..m` (∈ `R`) | Se numeran `1..m` sobre `sorted(rsus)` |
+| — | RSU artificial `r_inf = 0` | Id reservado para "desconectado" |
+
+### El RSU artificial `r_inf` (garantiza factibilidad)
+
+El modelo exige que **toda la carga de cada vehículo se sirva** (restricción Ec. 2). Si un vehículo no alcanza ninguna RSU real, esa restricción sería infactible. Para evitarlo, a **cada vehículo presente en cada escenario** se le añade una tupla extra `<s, hmax, v, 0>`: la opción de "caer" en el RSU artificial `r_inf` (id 0) al salto `hmax = H+1`, con una **penalización enorme** (`P[hmax]`, por defecto 1000). Así el modelo siempre es factible y la desconexión solo se usa como último recurso.
+
+### Los conjuntos y parámetros que escribe
+
+| Símbolo OPL | Qué es | Cómo se genera |
+|-------------|--------|----------------|
+| `hmax` | Nº de saltos incl. desconexión | `H + 1` |
+| `rInf` | Id del RSU artificial | `0` |
+| `MaxR` | Máx. de RSU reales a desplegar | Parámetro (`--max-rsu`); default = nº de candidatos |
+| `R` | RSU candidatos (incluye `0`) | `{0}` ∪ RSU que aparecen en algún `CVR` |
+| `S` | Escenarios | Un id por instante |
+| `V` | Todos los vehículos | Unión de vehículos de todos los instantes |
+| `Vs[s]` | Vehículos presentes en `s` | `matrices_v2v[t]["vehiculos"]` |
+| `Cost[r]` | Costo de instalar `r` | `0` para `r_inf`; `1` cada RSU real (⇒ minimiza **cantidad**) |
+| `Cap[r]` | Capacidad de `r` | `r_inf` grande (1000); reales `cap_real` (100) |
+| `P[1..hmax]` | Penalización por salto | `[1, 2, …, H, penal_desconexion]` |
+| `L[s][v]` | Carga de tráfico | `carga_default` (1) para todos |
+| `CVR` | Tuplas `<s,h,v,r>` | De las matrices `S_h` (ver arriba) + tuplas `r_inf` |
+
+> **Solo RSU conectados (por defecto).** Los RSU que **ningún** vehículo alcanza jamás son inútiles (el modelo nunca los elegiría) y solo inflan el archivo. Por eso, por defecto, `R` incluye solo los RSU que aparecen en al menos una tupla `CVR`. Con `--todos-los-rsu` se incluyen todos los candidatos. Es una reducción **sin pérdida** para el óptimo.
+
+### Funciones principales
+
+| Función | Qué hace |
+|---------|----------|
+| `construir_datos_opl(matrices_v2v, tuplas_v2i, rsu_ids, H, …)` | Corre el multisalto en cada instante y arma en memoria **todos** los conjuntos/parámetros + `CVR` + los mapas de traducción |
+| `escribir_dat(datos, dat_path)` | Vuelca esa estructura al archivo `.dat` con la **sintaxis exacta** de OPL (`#[ k:v ]#`, `{ … }`, `<s,h,v,r>`) y una cabecera con la trazabilidad |
+| `exportar_dat_desde_json(output_dir, dat_path, H, …)` | **Punto de entrada:** lee `tuplas_v2v.json` + `tuplas_visibilidad.json` y escribe el `.dat` |
+| `exportar_dat_desde_memoria(matrices_v2v, tuplas_v2i, rsus, dat_path, H, …)` | Igual pero desde estructuras en memoria (para conectar con `app.py` en el futuro, sin pasar por disco) |
+
+### Cómo generarlo (línea de comandos)
+
+```bash
+# Lee output/tuplas_v2v.json + output/tuplas_visibilidad.json,
+# calcula el multisalto y escribe optimizacion/rsu_backend.dat
+python -m backend.exportar_dat
+
+# Con parámetros:
+python -m backend.exportar_dat --H 3 --max-rsu 10
+python -m backend.exportar_dat --todos-los-rsu       # incluir todos los candidatos
+```
+
+| Flag | Default | Descripción |
+|------|---------|-------------|
+| `--output-dir` | `output/` | Carpeta con los JSON del backend |
+| `--dat` | `optimizacion/rsu_backend.dat` | Ruta del `.dat` de salida |
+| `--H` | `3` | Nº máximo de saltos reales (el salto de desconexión es `H+1`) |
+| `--max-rsu` | sin límite | `MaxR`: nº máximo de RSU reales a desplegar |
+| `--todos-los-rsu` | (off) | Incluir todos los RSU candidatos, no solo los conectados |
+
+### Ejemplo de salida (con los datos reales de `output/`)
+
+Con la simulación de ejemplo (31 instantes, 132 vehículos, 333 RSU candidatos, `H=3`, `MaxR=10`) el módulo genera:
+
+```
+============================================================
+  .dat GENERADO CORRECTAMENTE
+============================================================
+  Archivo........: optimizacion/rsu_backend.dat
+  Escenarios.....: 31
+  Vehículos......: 132
+  RSU candidatos.: 256 (de 333)      # 77 RSU nunca alcanzados → excluidos
+  Saltos H.......: 3  (hmax = 4)
+  Tuplas CVR.....: 1710
+  MaxR...........: 10
+============================================================
+```
+
+El `.dat` resultante empieza con una **cabecera de trazabilidad** (mapa `escenario → t` y `id_RSU_OPL → id_RSU_backend`) y luego los datos. Un fragmento del `CVR`:
+
+```opl
+CVR = {
+  // escenario 1
+  <1,1,0,18>, <1,1,0,19>, <1,1,0,20>, <1,1,0,58>, ..., <1,4,0,0>,
+  // escenario 2
+  <2,1,1,...>, ...
+};
+```
+
+Léase `<1,1,0,18>` como *"en el escenario 1, el vehículo 0 alcanza el RSU 18 en 1 salto"*, y `<1,4,0,0>` como *"el vehículo 0 tiene la opción de quedar desconectado (r_inf) al salto 4, con penalización alta"*.
+
+### Resolución con docplex/CPLEX (Python, ya no `oplrun`)
+
+Antes la optimización se resolvía llamando al binario `oplrun` de IBM CPLEX Optimization Studio con el modelo OPL. **Ahora el modelo se construye y se resuelve directamente en Python con `docplex`** (IBM Decision Optimization CPLEX Modeling for Python), que usa el motor CPLEX como backend. El módulo [`optimizacion/optimizar_rsu.py`](optimizacion/optimizar_rsu.py) es la **traducción 1:1** de `rsu_model.mod`:
+
+| Elemento OPL | Equivalente docplex |
+|--------------|---------------------|
+| `dvar boolean Sel[R]` | `mdl.binary_var_dict(R)` |
+| `dvar float Rts[CVR] in 0..1` | `mdl.continuous_var(lb=0, ub=1)` por tupla |
+| `minimize Σ Sel·Cost + Σ Rts·P[h]·L` | `mdl.minimize(...)` |
+| Ec.2–5 (`forall`, `sum`, capacidad, `MaxR`) | `mdl.add_constraint(...)` |
+
+**Ventaja:** los datos de entrada son el **mismo dict** que produce `construir_datos_opl()` — ya no hace falta pasar por el archivo `.dat` para resolver (el `.dat` se sigue generando solo para inspección/compatibilidad OPL).
+
+**Requisitos e instalación del motor:**
+
+```bash
+pip install docplex            # capa de modelado (pura Python)
+# Motor CPLEX. `pip install cplex` = edición Community (límite 1000 vars/restricciones,
+# sirve para el micro-ejemplo pero NO para el problema completo).
+# Para el problema real usa el motor COMPLETO de CPLEX Studio, con Python 3.7–3.10:
+python "C:\Program Files\IBM\ILOG\CPLEX_Studio2211\python\setup.py" install
+```
+
+> ⚠️ **Nota de versión de Python.** El motor completo de CPLEX 22.11 soporta **Python 3.7–3.10**. Con Python 3.12/3.14 solo funciona la edición Community (vía `pip install cplex`), que resuelve el micro-ejemplo pero rechaza el problema real (1967 variables, 3132 restricciones > 1000). El código detecta ese caso y avisa con un mensaje claro (no revienta).
+>
+> ✅ **Recomendación (un solo entorno para todo).** Como el código exige **≥ 3.10** y el motor completo exige **≤ 3.10**, la intersección es **exactamente Python 3.10**: es la única versión que corre el backend VANET *y* el solver real en el mismo `.venv`, evitando tener dos entornos. Se comprobó que el proyecto **no usa sintaxis de 3.12+** (ni PEP 695 ni `from __future__`), así que bajar a 3.10 no rompe nada; con `requirements.txt` (cotas `>=`) pip resuelve versiones compatibles de NumPy/pandas/etc. Python 3.12 **no** sirve para unificar, porque el motor completo no llega a 3.12.
+>
+> ```powershell
+> # Crear el entorno único del proyecto con Python 3.10 (¡desde cero, ver aviso abajo!)
+> py -3.10 -m venv .venv
+> .\.venv\Scripts\activate
+> pip install -r requirements.txt
+> ```
+>
+> 🛑 **No reutilices un `.venv` viejo al cambiar de versión de Python.** Si corres
+> `py -3.10 -m venv .venv` *encima* de un `.venv` creado con otra versión (p. ej. 3.14),
+> el intérprete cambia a 3.10 pero **se conservan los paquetes compilados para la versión
+> anterior** (numpy/pandas con binarios de otra ABI). pip dirá *"already satisfied"* pero
+> `import numpy` fallará. **Solución:** bórralo y recréalo limpio:
+> `deactivate; Remove-Item -Recurse -Force .venv; py -3.10 -m venv .venv; .\.venv\Scripts\activate; pip install -r requirements.txt`.
+>
+> 🔧 **Motor completo de CPLEX sin permisos de administrador.** El instalador oficial
+> `python "C:\Program Files\...\setup.py" install` falla con `error: could not create
+> 'cplex.egg-info': Acceso denegado`, porque intenta escribir dentro de `C:\Program Files`.
+> Dos formas de resolverlo:
+> - **(A) Como Administrador:** abre PowerShell *"Ejecutar como administrador"*, activa el
+>   `.venv` y corre el `setup.py install`.
+> - **(B) Sin admin (recomendado):** copia el paquete a una carpeta escribible e instálalo
+>   desde ahí (el `egg-info` se crea en la copia, no en `Program Files`):
+>   ```powershell
+>   Copy-Item "C:\Program Files\IBM\ILOG\CPLEX_Studio2211\cplex\python\3.10\x64_win64" "$env:TEMP\cplex_full" -Recurse -Force
+>   pip install "$env:TEMP\cplex_full"
+>   ```
+>   Esto instala `cplex 22.1.1.0` (motor completo) reemplazando la edición Community.
+>
+> ✔️ **Verificado en este proyecto (Python 3.10.11):** tras recrear el `.venv` e instalar
+> el motor completo por el método (B), el problema real resuelve a óptimo
+> (`31 escenarios · 132 vehículos · 256 RSU · 1710 CVR`, objetivo 2239.0, *integer optimal
+> solution*, 40 RSU desplegadas), y el micro-ejemplo sigue dando `{R1, R3}` = 11.0.
+
+**Cómo ejecutarlo y demostrar que funciona:**
+
+```bash
+# 1) Auto-test de validación: resuelve el micro-ejemplo (réplica de rsu_micro.dat).
+#    Debe elegir {R1, R3} con objetivo 11.0 — idéntico al OPL original.
+python optimizacion/optimizar_rsu.py --micro
+
+# 2) Caso real: genera el .dat desde output/ Y resuelve con docplex en un solo paso.
+python optimizacion/optimizar_rsu.py --H 3 --max-rsu 10
+```
+
+Salida del auto-test (`--micro`):
+
+```
+  OBJETIVO = 11.0000   (estado: integer optimal solution)
+  ✅ RSU a desplegar (ids OPL):     [1, 3]
+     RSU a desplegar (ids backend):  ['R1', 'R3']
+  Validación: esperado [1, 3], obtenido [1, 3] -> ✅ OK
+```
+
+Con datos reales, el solver devuelve los **ids de RSU del backend** a desplegar (usando el mapa inverso de la cabecera del `.dat`). El siguiente paso pendiente es integrar ese resultado (RSU elegidos) en la UI/mapa.
+
+---
+
 ## 📚 Scripts didácticos (para entender y explicar el proyecto)
 
 Además de la aplicación, el proyecto incluye **3 scripts de consola** pensados para *entender* y *explicar* cómo funciona el pipeline, de lo más simple a lo más real. Todos usan las **funciones reales** del proyecto (`backend/visibilidad.py` y `backend/multisalto.py`), así que no son cálculos "de mentira".
@@ -1558,6 +1784,12 @@ Todos los archivos se generan en la carpeta `output/`:
 | `tuplas_v2v.json` | JSON | `visibilidad.py` | Matriz A de tuplas `<t, Vi, Vj>` con LoS confirmado, matrices A por timestep, estadísticas V2V |
 | `multisalto.json` | JSON | `multisalto.py` | (Opcional) `R_H`, `D_H` y vector `d` por instante + resumen por salto. Se genera al exportar el análisis multisalto |
 
+### Optimización (carpeta `optimizacion/`)
+
+| Archivo | Formato | Generado por | Contenido |
+|---------|---------|-------------|-----------|
+| `rsu_backend.dat` | DAT (OPL) | `exportar_dat.py` | Datos para CPLEX generados desde el backend: conjuntos `R/S/V`, parámetros `Cost/Cap/P/L`, y tuplas `CVR = <s,h,v,r>` derivadas de las matrices `S_h` |
+
 ---
 
 ## 💡 Consideraciones Técnicas
@@ -1583,9 +1815,11 @@ La conversión entre ambos sistemas se hace mediante `obtener_proyeccion()` + `c
 1. ~~**Módulo 2:** Visualización de tráfico simulado sobre el mapa usando datos de SUMO~~ ✅ **Implementado**
 2. ~~**Conectividad V2V:** Matriz A vehículo-vehículo con tuplas `<t, Vi, Vj>`~~ ✅ **Implementado**
 3. ~~**Conectividad multisalto:** Uso de las matrices A y B para calcular conectividad a múltiples saltos mediante producto binario de matrices (R_h, S_h, D_H, vector d)~~ ✅ **Implementado** (módulo [`backend/multisalto.py`](backend/multisalto.py))
-4. **Módulo 3:** Integración con NS-3 para simulación de protocolos VANET
-5. **API REST:** Migrar el backend a FastAPI para desacoplar completamente frontend y backend
-6. **Docker:** Containerizar la aplicación con SUMO incluido para facilitar despliegues
+4. ~~**Exportación a la optimización:** Generar el `.dat` de OPL/CPLEX desde los datos del backend (conjuntos, parámetros y `CVR` desde las `S_h`)~~ ✅ **Implementado** (módulo [`backend/exportar_dat.py`](backend/exportar_dat.py)).
+5. ~~**Resolver la optimización:** Ejecutar el solver de despliegue de RSU~~ ✅ **Implementado** con **docplex/CPLEX en Python** ([`optimizacion/optimizar_rsu.py`](optimizacion/optimizar_rsu.py), ya no `oplrun`). Validado contra el micro-ejemplo (elige `{R1, R3}`, objetivo 11.0, idéntico al OPL) y resuelve datos reales del backend. ⏳ **Pendiente:** integrar el resultado (RSU elegidos) en la UI/mapa.
+6. **Módulo 3:** Integración con NS-3 para simulación de protocolos VANET
+7. **API REST:** Migrar el backend a FastAPI para desacoplar completamente frontend y backend
+8. **Docker:** Containerizar la aplicación con SUMO incluido para facilitar despliegues
 
 ---
 

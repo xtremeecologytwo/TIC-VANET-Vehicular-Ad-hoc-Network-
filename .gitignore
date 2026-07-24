@@ -1,0 +1,44 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+
+# ---- Entornos virtuales (¡NUNCA commitear!) ----
+.venv/
+venv/
+env/
+ENV/
+
+# ---- LaTeX (basura de compilación) ----
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.run.xml
+*.bcf
+*.nav
+*.snm
+*.vrb
+
+# ---- Sistema operativo ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Notas ----
+# Los datos generados en output/ (map.osm, *.net.xml, fcd.xml, *.json) ya estaban
+# versionados en commits anteriores y se dejan tal cual. Si en el futuro se quiere
+# dejar de versionarlos, descomentar y hacer `git rm --cached`:
+# output/map.osm
+# output/*.net.xml
+# output/*.poly.xml
+# output/*.rou.xml
+# output/fcd.xml

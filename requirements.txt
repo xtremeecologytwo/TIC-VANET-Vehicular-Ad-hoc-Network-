@@ -4,3 +4,13 @@ streamlit-folium>=0.11.0
 requests>=2.28.0
 pandas>=1.5.0
 numpy>=1.23.0
+
+# --- Optimización de RSU (docplex/CPLEX) ---
+# Capa de modelado en Python (sustituye a OPL/oplrun). Pura-Python, pip-installable.
+docplex>=2.25
+# Motor CPLEX. `pip install cplex` da la edición Community (límite 1000
+# variables/restricciones), suficiente para el micro-ejemplo pero NO para el
+# problema completo. Para resolver el problema real usa el motor COMPLETO de
+# IBM CPLEX Optimization Studio (Python 3.7–3.10):
+#   python "C:\Program Files\IBM\ILOG\CPLEX_Studio2211\python\setup.py" install
+cplex>=22.1 ; python_version < "3.13"
