@@ -5,6 +5,13 @@ requests>=2.28.0
 pandas>=1.5.0
 numpy>=1.23.0
 
+# --- API REST (frontend React) ---
+# Expone el backend VANET como HTTP para el SPA de React (ver api/main.py).
+# Levantar con:  uvicorn api.main:app --port 8000
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+
 # --- Optimización de RSU (docplex/CPLEX) ---
 # Capa de modelado en Python (sustituye a OPL/oplrun). Pura-Python, pip-installable.
 docplex>=2.25

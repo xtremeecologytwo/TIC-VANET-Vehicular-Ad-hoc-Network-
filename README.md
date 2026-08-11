@@ -264,6 +264,24 @@ completo** (licencia académica de IBM): ver **[`DESPLIEGUE.md`](DESPLIEGUE.md)*
 > que **Streamlit Community Cloud no sirve**. Alternativas: Hugging Face Spaces
 > (Docker, gratis), Render/Railway/Fly.io, un VPS, o el servidor de la EPN.
 
+### 6. Frontend React + API FastAPI (migración en curso)
+
+Además del frontend Streamlit, el proyecto se está migrando a **React + FastAPI**:
+la ciencia (SUMO, LoS, multisalto, optimización) sigue en `backend/` y
+`optimizacion/`, expuesta como **API HTTP** (`api/`) que consume un **SPA React**
+(`web/`).
+
+```bash
+# 1) API (desde la raíz, en el venv con SUMO + docplex/CPLEX)
+uvicorn api.main:app --reload --port 8000
+# 2) SPA React (desde web/)
+cd web && npm install && npm run dev      # http://localhost:5173
+```
+
+Detalles y estado de la migración: [`web/README.md`](web/README.md). Endpoints:
+`api/main.py` (`/api/scenario/generate`, `/api/rsu/filter`, `/api/simulate`,
+`/api/connectivity`, `/api/optimize`).
+
 ---
 
 ## 📂 Estructura de Archivos Detallada

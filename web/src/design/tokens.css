@@ -1,0 +1,49 @@
+/* ============================================================
+   SmartCityNet — sistema de diseño "consola científica/ingeniería"
+   Claro, un solo acento azul acero, verde semántico para "óptimo",
+   datos en monoespaciada con cifras tabulares, hairlines de plano.
+   ============================================================ */
+:root {
+  --ground: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #fbfcfd;
+  --ink: #0f1b2d;
+  --muted: #5b6b7f;
+  --faint: #8695a6;
+  --line: #e2e6ec;
+  --line-strong: #cfd6df;
+  --accent: #2557a7;
+  --accent-deep: #16407f;
+  --accent-wash: #eaf1fb;
+  --ok: #0f9d6b;
+  --ok-wash: #e6f6ee;
+  --warn: #b9770b;
+  --crit: #c0392b;
+  --grid: rgba(37, 87, 167, 0.05);
+  --shadow: 0 1px 2px rgba(15, 27, 45, 0.04), 0 6px 18px rgba(15, 27, 45, 0.05);
+  --r: 10px;
+  --r-sm: 7px;
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.eyebrow {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--faint);
+}
+button { font-family: var(--font-sans); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
