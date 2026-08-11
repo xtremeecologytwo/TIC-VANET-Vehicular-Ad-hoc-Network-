@@ -33,22 +33,38 @@ def _ajustar_vista(m: folium.Map, proy: dict) -> folium.Map:
         El mismo mapa `m` con el ajuste de vista aplicado.
     """
     orig = proy.get("orig") if isinstance(proy, dict) else None
+    bounds_js = "null"
     if orig and len(orig) == 4:
         # Encuadrar al bounding box geográfico real del escenario.
         m.fit_bounds([[orig[1], orig[0]], [orig[3], orig[2]]])
+        bounds_js = (f"[[{orig[1]}, {orig[0]}], [{orig[3]}, {orig[2]}]]")
 
-    # invalidateSize diferido: se ejecuta tras el layout del contenedor y en
-    # cada resize, garantizando que los overlays queden alineados a las calles
-    # desde la primera vez (no solo tras interactuar).
+    # El desalineamiento aparece porque el contenedor del componente cambia de
+    # tamaño DESPUÉS de que Leaflet inicializa (Streamlit aplica el ancho de la
+    # columna tras el primer layout). La corrección canónica es invalidateSize()
+    # cuando el contenedor ya tiene su tamaño final. Aquí se dispara por tres
+    # vías complementarias para que quede alineado sin que el usuario interactúe:
+    #   1) ResizeObserver sobre el propio contenedor del mapa (capta el cambio
+    #      de ancho de la columna) — es la más fiable.
+    #   2) Una ráfaga de reintentos que ademÁs re-encuadra (fitBounds) mientras
+    #      el layout se asienta.
+    #   3) Los eventos load/resize de la ventana.
     nombre = m.get_name()
-    js = (
-        "setTimeout(function() {"
-        f"  try {{ {nombre}.invalidateSize(true); }} catch (e) {{}}"
-        "}, 300);"
-        f"window.addEventListener('resize', function() {{"
-        f"  try {{ {nombre}.invalidateSize(true); }} catch (e) {{}}"
-        "});"
-    )
+    js = f"""
+    (function() {{
+      var _m = {nombre};
+      var _b = {bounds_js};
+      function _inval() {{ try {{ _m.invalidateSize(true); }} catch (e) {{}} }}
+      function _frame() {{ _inval(); if (_b) {{ try {{ _m.fitBounds(_b); }} catch (e) {{}} }} }}
+      [0, 120, 260, 450, 700, 1100, 1600].forEach(function(t) {{ setTimeout(_frame, t); }});
+      try {{
+        var _ro = new ResizeObserver(function() {{ _inval(); }});
+        _ro.observe(_m.getContainer());
+      }} catch (e) {{}}
+      window.addEventListener('resize', _inval);
+      window.addEventListener('load', _frame);
+    }})();
+    """
     m.get_root().script.add_child(folium.Element(js))
     return m
 
