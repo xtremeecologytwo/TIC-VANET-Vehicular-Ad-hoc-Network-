@@ -135,6 +135,15 @@ def _cargar_output_existente():
                 d = json.load(f)
             STATE["matrices_v2v"] = d.get("matrices")
             STATE["tuplas_v2v"] = d.get("tuplas_v2v")
+        # Cargar el FCD (posiciones vehiculares) para que la animación de
+        # conectividad funcione al retomar un escenario ya guardado. El paso de
+        # muestreo se infiere de la separación entre snapshots de las matrices.
+        fcd_path = os.path.join(OUTPUT_DIR, "fcd.xml")
+        if os.path.exists(fcd_path) and STATE["matrices_v2v"]:
+            keys = sorted(float(k) for k in STATE["matrices_v2v"].keys())
+            step = (keys[1] - keys[0]) if len(keys) >= 2 else 120.0
+            datos, _ = parsear_fcd(fcd_path, step)
+            STATE["datos_fcd"] = datos
     except Exception:
         # Arranque sin escenario previo: no es error.
         pass
@@ -296,6 +305,15 @@ def simulate(req: SimReq):
                 "bidireccional": est_v2v["bidireccional"]},
         "timesteps": timesteps,
     }
+
+
+@app.get("/api/timesteps")
+def timesteps():
+    """Lista de instantes disponibles para la animación de conectividad."""
+    src = STATE["datos_fcd"] or STATE["matrices_v2v"]
+    if not src:
+        return {"timesteps": []}
+    return {"timesteps": sorted(float(t) for t in src.keys())}
 
 
 @app.get("/api/connectivity")

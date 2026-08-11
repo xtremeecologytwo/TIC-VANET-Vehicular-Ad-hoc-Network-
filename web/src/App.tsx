@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import ScenarioMap from "./components/ScenarioMap";
 import { api } from "./api/client";
-import type { BBox, LatLon, Rsu } from "./api/client";
+import type { BBox, LatLon, Rsu, ConnFrame } from "./api/client";
 import "./App.css";
 
 /* ---------- componentes de UI ---------- */
@@ -65,8 +65,44 @@ export default function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activo, setActivo] = useState(1);
+  // Animación de conectividad
+  const [timesteps, setTimesteps] = useState<number[]>([]);
+  const [tIdx, setTIdx] = useState(0);
+  const [frame, setFrame] = useState<ConnFrame | null>(null);
+  const [playing, setPlaying] = useState(false);
 
   const set = (k: keyof typeof DEF) => (v: number) => setP((s) => ({ ...s, [k]: v }));
+
+  const run = useCallback(async (nombre: string, fn: () => Promise<void>) => {
+    setBusy(nombre); setError(null);
+    try { await fn(); } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
+  }, []);
+
+  const seek = useCallback(async (i: number, ts = timesteps) => {
+    if (!ts.length) return;
+    const idx = (i + ts.length) % ts.length;
+    setTIdx(idx);
+    try { setFrame(await api.connectivity(ts[idx])); } catch { /* noop */ }
+  }, [timesteps]);
+
+  const cargarTimesteps = useCallback(async () => {
+    const { timesteps: ts } = await api.timesteps();
+    setTimesteps(ts);
+    if (ts.length) { setTIdx(0); try { setFrame(await api.connectivity(ts[0])); } catch { /* noop */ } }
+  }, []);
+
+  // Reproducción: avanza un instante cada 700 ms.
+  useEffect(() => {
+    if (!playing || timesteps.length === 0) return;
+    const id = setInterval(() => {
+      setTIdx((i) => {
+        const n = (i + 1) % timesteps.length;
+        api.connectivity(timesteps[n]).then(setFrame).catch(() => {});
+        return n;
+      });
+    }, 700);
+    return () => clearInterval(id);
+  }, [playing, timesteps]);
 
   // Rehidratar: si el servidor ya tiene un escenario en output/, cargarlo.
   useEffect(() => {
@@ -75,16 +111,11 @@ export default function App() {
         setBounds(s.bounds);
         api.buildings().then((b) => setEdificios(b.edificios)).catch(() => {});
         setKpis((k) => ({ ...k, Junctions: s.n_junctions, Edificios: s.n_edificios }));
-        if (s.tiene_simulacion) setActivo(3);
+        if (s.tiene_simulacion) { setActivo(3); cargarTimesteps().catch(() => {}); }
         else if (s.tiene_rsus) setActivo(2);
       }
     }).catch((e) => setError(`API no disponible: ${e.message}`));
-  }, []);
-
-  const run = useCallback(async (nombre: string, fn: () => Promise<void>) => {
-    setBusy(nombre); setError(null);
-    try { await fn(); } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
-  }, []);
+  }, [cargarTimesteps]);
 
   const generar = () => run("Generando escenario", async () => {
     if (!bbox) { setError("Dibuja un rectángulo en el mapa primero."); return; }
@@ -109,6 +140,7 @@ export default function App() {
       "Tuplas V2V": r.v2v.total_tuplas, Vehículos: r.v2v.n_vehiculos,
     }));
     setActivo(3);
+    await cargarTimesteps();
   });
 
   const optimizar = () => run("Optimizando despliegue", async () => {
@@ -153,15 +185,33 @@ export default function App() {
       <div className="console">
         <div className="panel">
           <div className="panel-hd">
-            <span className="ttl">Área de trabajo — dibuja un rectángulo</span>
-            {bbox && <span className="readout mono">
-              {bbox.min_lat.toFixed(3)}, {bbox.min_lon.toFixed(3)}
-            </span>}
+            <span className="ttl">Área de trabajo{timesteps.length ? "" : " — dibuja un rectángulo"}</span>
+            {frame ? (
+              <span className="readout mono">
+                t={frame.t}s · {frame.vehiculos.length} veh · {frame.v2i.length} V2I · {frame.v2v.length} V2V
+              </span>
+            ) : bbox ? (
+              <span className="readout mono">{bbox.min_lat.toFixed(3)}, {bbox.min_lon.toFixed(3)}</span>
+            ) : null}
           </div>
           <div className="panel-bd map-bd">
             <ScenarioMap edificios={edificios} candidatas={candidatas}
-              desplegadas={desplegadas} bounds={bounds} onBbox={setBbox} />
+              desplegadas={desplegadas} bounds={bounds} frame={frame} onBbox={setBbox} />
           </div>
+          {timesteps.length > 0 && (
+            <div className="timeline">
+              <button className="tl-play" onClick={() => setPlaying((v) => !v)}
+                aria-label={playing ? "Pausar" : "Reproducir"}>{playing ? "❚❚" : "▶"}</button>
+              <input type="range" min={0} max={timesteps.length - 1} value={tIdx}
+                onChange={(e) => { setPlaying(false); seek(Number(e.target.value)); }} />
+              <span className="tl-t mono">t={timesteps[tIdx]}s</span>
+              <span className="tl-legend">
+                <i style={{ background: "#2557a7" }} />veh
+                <i style={{ background: "#0f9d6b" }} />V2I
+                <i style={{ background: "#b9770b" }} />V2V
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="panel">

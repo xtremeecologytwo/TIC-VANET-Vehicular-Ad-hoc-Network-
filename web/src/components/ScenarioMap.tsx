@@ -1,11 +1,11 @@
 import { useEffect, useMemo } from "react";
-import { MapContainer, TileLayer, GeoJSON, CircleMarker, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, GeoJSON, CircleMarker, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet-draw";
 import "leaflet-draw/dist/leaflet.draw.css";
 import type { FeatureCollection } from "geojson";
-import type { BBox, LatLon, Rsu } from "../api/client";
+import type { BBox, LatLon, Rsu, ConnFrame } from "../api/client";
 
 /* Captura de rectángulo con leaflet-draw → devuelve el bbox al padre. */
 function DrawRectangle({ onBbox }: { onBbox: (b: BBox) => void }) {
@@ -55,10 +55,11 @@ export interface MapProps {
   candidatas?: Rsu[] | null;
   desplegadas?: Rsu[] | null;
   bounds?: [LatLon, LatLon] | null;
+  frame?: ConnFrame | null;
   onBbox?: (b: BBox) => void;
 }
 
-export default function ScenarioMap({ edificios, candidatas, desplegadas, bounds, onBbox }: MapProps) {
+export default function ScenarioMap({ edificios, candidatas, desplegadas, bounds, frame, onBbox }: MapProps) {
   const desplegadasIds = useMemo(() => new Set((desplegadas ?? []).map((r) => r.id)), [desplegadas]);
 
   const geojson = useMemo<FeatureCollection | null>(() => {
@@ -102,6 +103,20 @@ export default function ScenarioMap({ edificios, candidatas, desplegadas, bounds
         {(desplegadas ?? []).map((r) => (
           <CircleMarker key={`d-${r.id}`} center={[r.lat, r.lon]} radius={7}
             pathOptions={{ color: "#166534", weight: 2, fillColor: "#22c55e", fillOpacity: 0.95 }} />
+        ))}
+
+        {/* Conectividad del instante: enlaces V2V (ámbar) + V2I (verde) + vehículos */}
+        {frame?.v2v.map((l, i) => (
+          <Polyline key={`vv-${i}`} positions={[l.a, l.b]}
+            pathOptions={{ color: "#b9770b", weight: 2, opacity: 0.7, dashArray: "5 4" }} />
+        ))}
+        {frame?.v2i.map((l, i) => (
+          <Polyline key={`vi-${i}`} positions={[l.a, l.b]}
+            pathOptions={{ color: "#0f9d6b", weight: 1.5, opacity: 0.5, dashArray: "4 4" }} />
+        ))}
+        {frame?.vehiculos.map((v) => (
+          <CircleMarker key={`veh-${v.id}`} center={[v.lat, v.lon]} radius={5}
+            pathOptions={{ color: "#16407f", weight: 2, fillColor: "#2557a7", fillOpacity: 0.95 }} />
         ))}
       </MapContainer>
     </div>

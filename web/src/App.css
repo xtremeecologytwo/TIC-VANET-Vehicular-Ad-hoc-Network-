@@ -100,5 +100,18 @@
 .foot { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--faint);
   display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 
+/* ---------- timeline de conectividad ---------- */
+.timeline { display: flex; align-items: center; gap: 12px; padding: 10px 15px;
+  border-top: 1px solid var(--line); background: var(--surface-2); }
+.tl-play { width: 30px; height: 30px; flex-shrink: 0; border: 1px solid var(--accent);
+  background: var(--accent); color: #fff; border-radius: var(--r-sm); cursor: pointer;
+  font-size: 11px; line-height: 1; display: grid; place-items: center; }
+.tl-play:hover { background: var(--accent-deep); }
+.timeline input[type="range"] { flex: 1; accent-color: var(--accent); }
+.tl-t { font-size: 12px; color: var(--muted); min-width: 74px; text-align: right; }
+.tl-legend { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--faint);
+  font-family: var(--font-mono); }
+.tl-legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-left: 8px; }
+
 /* Leaflet: que los controles no tapen las esquinas del marco */
 .leaflet-top.leaflet-left { margin: 6px; }

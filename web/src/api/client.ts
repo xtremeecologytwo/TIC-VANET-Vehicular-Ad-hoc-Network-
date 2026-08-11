@@ -29,6 +29,12 @@ export interface OptResult {
   desplegadas: Rsu[];
   candidatas: Rsu[];
 }
+export interface ConnFrame {
+  t: number;
+  vehiculos: { id: string; lat: number; lon: number }[];
+  v2i: { v: string; rsu: string; a: LatLon; b: LatLon }[];
+  v2v: { a: LatLon; b: LatLon }[];
+}
 export interface AppState {
   tiene_escenario: boolean; tiene_rsus: boolean; tiene_simulacion: boolean;
   n_junctions: number; n_edificios: number; n_rsus: number;
@@ -60,4 +66,6 @@ export const api = {
     req<SimResult>("/api/simulate", { method: "POST", body: JSON.stringify(body) }),
   optimize: (body: { H: number; max_rsu: number | null }) =>
     req<OptResult>("/api/optimize", { method: "POST", body: JSON.stringify(body) }),
+  timesteps: () => req<{ timesteps: number[] }>("/api/timesteps"),
+  connectivity: (t: number) => req<ConnFrame>(`/api/connectivity?t=${t}`),
 };
