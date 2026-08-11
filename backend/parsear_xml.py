@@ -150,41 +150,77 @@ def obtener_proyeccion(net_xml_path: str) -> dict | None:
     try:
         orig = [float(v) for v in location.get("origBoundary", "").split(",")]
         conv = [float(v) for v in location.get("convBoundary", "").split(",")]
-        
+
         if len(orig) != 4 or len(conv) != 4:
             return None
-        
-        return {"orig": orig, "conv": conv}
+
+        proy = {"orig": orig, "conv": conv}
+
+        # Proyección REAL de SUMO (para invertir con exactitud, no por
+        # interpolación). SUMO cumple:  xy_sumo = proj(lon,lat) + netOffset,
+        # así que para volver a lon/lat: proj_inv(xy_sumo - netOffset).
+        proj_param = location.get("projParameter", "")
+        if proj_param:
+            proy["proj"] = proj_param
+        try:
+            ox, oy = (float(v) for v in location.get("netOffset", "").split(","))
+            proy["netOffset"] = [ox, oy]
+        except (ValueError, AttributeError):
+            pass
+
+        return proy
     except (ValueError, AttributeError):
         return None
 
 
+# Caché de transformadores pyproj por cadena de proyección (crearlos es caro).
+_TRANSFORMERS: dict = {}
+
+
+def _transformer(proj_param: str):
+    t = _TRANSFORMERS.get(proj_param)
+    if t is None:
+        from pyproj import Transformer
+        t = Transformer.from_crs(proj_param, "EPSG:4326", always_xy=True)
+        _TRANSFORMERS[proj_param] = t
+    return t
+
+
 def convertir_xy_a_lonlat(x: float, y: float, proy: dict) -> tuple[float, float]:
     """
-    Convierte coordenadas SUMO (x, y en metros) a coordenadas geográficas (lat, lon)
-    usando interpolación lineal entre los boundaries original y convertido.
-    
+    Convierte coordenadas SUMO (x, y en metros) a coordenadas geográficas
+    (lat, lon).
+
+    Usa la PROYECCIÓN REAL de SUMO (UTM vía pyproj) cuando el .net.xml trae
+    `projParameter` y `netOffset` — así los edificios/RSU quedan exactamente
+    superpuestos con el mapa base. Si pyproj o esos datos no están, cae a la
+    interpolación lineal entre los boundaries (aproximada).
+
     Parámetros:
         x, y: Coordenadas en el sistema SUMO (metros).
         proy: Diccionario de proyección obtenido de obtener_proyeccion().
-    
+
     Retorna:
         Tupla (lat, lon) en grados decimales.
     """
+    proj_param = proy.get("proj")
+    off = proy.get("netOffset")
+    if proj_param and off:
+        try:
+            # xy_sumo - netOffset = coords proyectadas (UTM); invertir a lon/lat
+            lon, lat = _transformer(proj_param).transform(x - off[0], y - off[1])
+            return lat, lon
+        except Exception:
+            pass  # cae al método lineal
+
     orig = proy["orig"]  # [lon_min, lat_min, lon_max, lat_max]
     conv = proy["conv"]  # [x_min, y_min, x_max, y_max]
-    
-    # Evitar división por cero
     dx = conv[2] - conv[0]
     dy = conv[3] - conv[1]
-    
     if dx == 0 or dy == 0:
         return 0.0, 0.0
-    
-    # Interpolación lineal: mapear de [conv_min, conv_max] a [orig_min, orig_max]
     lon = orig[0] + (x - conv[0]) / dx * (orig[2] - orig[0])
     lat = orig[1] + (y - conv[1]) / dy * (orig[3] - orig[1])
-    
     return lat, lon
 
 

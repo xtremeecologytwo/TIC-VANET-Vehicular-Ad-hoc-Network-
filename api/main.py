@@ -92,9 +92,16 @@ def _rsus_geojson(rsus):
 
 
 def _bounds():
-    """[[lat_min,lon_min],[lat_max,lon_max]] del escenario, para encuadrar el mapa."""
-    o = STATE["proy"]["orig"]  # [lon_min, lat_min, lon_max, lat_max]
-    return [[o[1], o[0]], [o[3], o[2]]]
+    """[[lat_min,lon_min],[lat_max,lon_max]] del escenario, para encuadrar el mapa.
+
+    Usa las esquinas de convBoundary proyectadas con la proyección REAL (no
+    origBoundary, que es la descarga original sin recortar), de modo que el
+    encuadre coincida con la extensión efectiva de la red y de los edificios.
+    """
+    c = STATE["proy"]["conv"]  # [x_min, y_min, x_max, y_max]
+    a = _ll(c[0], c[1])
+    b = _ll(c[2], c[3])
+    return [[min(a[0], b[0]), min(a[1], b[1])], [max(a[0], b[0]), max(a[1], b[1])]]
 
 
 # ============================================================
