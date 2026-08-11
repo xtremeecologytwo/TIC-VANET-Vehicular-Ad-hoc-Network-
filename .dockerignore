@@ -1,0 +1,21 @@
+# Entornos y cachés — nunca deben entrar a la imagen
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+
+# Salidas pesadas de simulaciones (se regeneran en la app)
+output/*.xml
+output/fcd.xml
+
+# Artefactos de LaTeX / documento (no son parte de la app)
+Jornadas SmartCityNet/
+*.pdf
+*.aux
+*.log
+
+# IDE
+.vscode/
+.idea/

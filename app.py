@@ -22,11 +22,12 @@ from frontend.estilos import (
     inyectar_css, renderizar_header, renderizar_instrucciones,
     renderizar_coordenadas, renderizar_estado_vacio,
     renderizar_paso_pipeline, renderizar_divider, renderizar_resumen,
-    renderizar_map_label, renderizar_simulacion_stats, renderizar_v2v_stats
+    renderizar_map_label, renderizar_simulacion_stats, renderizar_v2v_stats,
+    renderizar_stepper
 )
 from frontend.mapa import (
     crear_mapa, extraer_coordenadas_bbox,
-    crear_mapa_resultados, crear_mapa_conectividad
+    crear_mapa_resultados, crear_mapa_conectividad, crear_mapa_optimizacion
 )
 from backend.descargar_osm import descargar_mapa_osm
 from backend.sumo_pipeline import ejecutar_pipeline_sumo
@@ -39,6 +40,8 @@ from backend.visibilidad import (
     generar_tuplas_v2v, guardar_tuplas_v2v_json
 )
 from backend.multisalto import analizar_timestep
+from backend.exportar_dat import exportar_dat_desde_memoria
+from optimizacion.optimizar_rsu import optimizar
 
 
 # ==========================================
@@ -70,12 +73,24 @@ if "ejecutar_simulacion" not in st.session_state:
     st.session_state.ejecutar_simulacion = False
 if "simulacion_resultados" not in st.session_state:
     st.session_state.simulacion_resultados = None
+if "ejecutar_optimizacion" not in st.session_state:
+    st.session_state.ejecutar_optimizacion = False
+if "optimizacion_resultados" not in st.session_state:
+    st.session_state.optimizacion_resultados = None
 
 
 # ==========================================
 # HEADER
 # ==========================================
 renderizar_header()
+
+# Stepper de módulos: refleja hasta qué punto ha avanzado el flujo.
+_modulo_activo = (
+    3 if st.session_state.simulacion_resultados
+    else 2 if st.session_state.pipeline_resultados
+    else 1
+)
+renderizar_stepper(_modulo_activo)
 
 
 # ==========================================
@@ -111,16 +126,17 @@ with col_panel:
     # ---- Controles de generación de escenario ----
     with st.expander("⚙️ Parámetros de simulación", expanded=False):
         st.markdown("""
-        <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 0.6rem;">
+        <div style="font-size: 0.8rem; color: #5b6b7f; margin-bottom: 0.6rem;">
             Configura cuántos vehículos generar y con qué separación temporal.
         </div>
         """, unsafe_allow_html=True)
 
         num_vehiculos = st.slider(
             "🚗 Número de vehículos",
-            min_value=5, max_value=200, value=100, step=5,
+            min_value=5, max_value=1000, value=100, step=5,
             help="Cantidad total de vehículos con rutas aleatorias a generar "
-                 "durante toda la simulación."
+                 "durante toda la simulación. Soporta hasta 1000 (el motor de "
+                 "conectividad usa índice espacial, así que escala bien)."
         )
         tiempo_simulacion_min = st.slider(
             "🕐 Duración de simulación (minutos)",
@@ -141,7 +157,7 @@ with col_panel:
         st.markdown(f"""
         <div style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2);
                     border-radius: 8px; padding: 8px 12px; font-size: 0.78rem; margin-top: 0.4rem;">
-            🚦 <strong style="color:#10b981;">Salida automática:</strong>
+            🚦 <strong style="color:#0f9d6b;">Salida automática:</strong>
             1 vehículo cada <strong>{periodo_salida:.1f} s</strong>
             → {num_vehiculos} autos repartidos en {tiempo_simulacion_min} min.
         </div>
@@ -311,8 +327,8 @@ if st.session_state.pipeline_resultados:
         # ---- Controles de filtrado ----
         with st.expander("⚙️ Configuración de filtrado RSU", expanded=True):
             st.markdown("""
-            <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 0.6rem;">
-                Ajusta los parámetros para determinar dónde colocar los <strong style="color: #06b6d4;">RSU (Road Side Units)</strong>.
+            <div style="font-size: 0.8rem; color: #5b6b7f; margin-bottom: 0.6rem;">
+                Ajusta los parámetros para determinar dónde colocar los <strong style="color: #2557a7;">RSU (Road Side Units)</strong>.
                 Solo se mostrarán las intersecciones que cumplan ambos criterios.
             </div>
             """, unsafe_allow_html=True)
@@ -372,14 +388,14 @@ if st.session_state.pipeline_resultados:
 
         st.markdown(f"""
         <div style="display: flex; align-items: center; gap: 20px; margin-bottom: 0.8rem; flex-wrap: wrap;">
-            <div style="font-size: 0.82rem; color: #94a3b8;">
+            <div style="font-size: 0.82rem; color: #5b6b7f;">
                 <span style="color: #ef4444;">★ Rojo</span> = RSU candidatos &nbsp;&nbsp;
                 <span style="color: #fb923c;">■ Naranja</span> = Edificios &nbsp;&nbsp;{leyenda_cobertura}
             </div>
-            <div style="background: rgba(6, 182, 212, 0.08); border: 1px solid rgba(6, 182, 212, 0.2); border-radius: 8px; padding: 4px 12px; font-size: 0.78rem;">
-                <span style="color: #94a3b8;">Originales:</span> <span style="color: #06b6d4; font-weight: 700;">{len(junctions_originales)}</span>
-                <span style="color: #94a3b8;"> → RSU:</span> <span style="color: #ef4444; font-weight: 700;">{len(junctions_rsu)}</span>
-                <span style="color: #94a3b8;"> (reducción {100 - (len(junctions_rsu) / max(len(junctions_originales), 1) * 100):.0f}%)</span>
+            <div style="background: rgba(37, 87, 167, 0.08); border: 1px solid rgba(37, 87, 167, 0.2); border-radius: 8px; padding: 4px 12px; font-size: 0.78rem;">
+                <span style="color: #5b6b7f;">Originales:</span> <span style="color: #2557a7; font-weight: 700;">{len(junctions_originales)}</span>
+                <span style="color: #5b6b7f;"> → RSU:</span> <span style="color: #ef4444; font-weight: 700;">{len(junctions_rsu)}</span>
+                <span style="color: #5b6b7f;"> (reducción {100 - (len(junctions_rsu) / max(len(junctions_originales), 1) * 100):.0f}%)</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -397,11 +413,11 @@ if st.session_state.pipeline_resultados:
         renderizar_divider("📡 Módulo 2 — Simulación de Conectividad V2I + V2V")
 
         st.markdown("""
-        <div style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 1rem; line-height: 1.6;">
+        <div style="font-size: 0.85rem; color: #5b6b7f; margin-bottom: 1rem; line-height: 1.6;">
             Ejecuta la simulación de tráfico en SUMO para obtener la posición de cada vehículo
             en cada instante de tiempo, y genera:<br>
-            • <strong style="color: #06b6d4;">Tuplas &lt;t, V, RSU&gt;</strong> — Conectividad V2I (Matriz B: vehículo–RSU)<br>
-            • <strong style="color: #eab308;">Tuplas &lt;t, Vi, Vj&gt;</strong> — Conectividad V2V (Matriz A: vehículo–vehículo)
+            • <strong style="color: #2557a7;">Tuplas &lt;t, V, RSU&gt;</strong> — Conectividad V2I (Matriz B: vehículo–RSU)<br>
+            • <strong style="color: #b9770b;">Tuplas &lt;t, Vi, Vj&gt;</strong> — Conectividad V2V (Matriz A: vehículo–vehículo)
         </div>
         """, unsafe_allow_html=True)
 
@@ -439,13 +455,13 @@ if st.session_state.pipeline_resultados:
             )
 
             st.markdown(f"""
-            <div style="background: rgba(6, 182, 212, 0.06); border: 1px solid rgba(6, 182, 212, 0.15);
+            <div style="background: rgba(37, 87, 167, 0.06); border: 1px solid rgba(37, 87, 167, 0.15);
                         border-radius: 8px; padding: 8px 14px; font-size: 0.78rem; margin-top: 0.5rem;">
-                <strong style="color: #06b6d4;">Radio OBU:</strong>
-                <span style="color: #f1f5f9;"><strong>{radio_obu_sim}m</strong></span>
-                <span style="color: #94a3b8;"> — Aplica a V2I y V2V. </span>
-                <strong style="color: #eab308;">V2V:</strong>
-                <span style="color: #f1f5f9;"><strong>{"Bidireccional" if v2v_bidireccional else "Dirigida"}</strong></span>
+                <strong style="color: #2557a7;">Radio OBU:</strong>
+                <span style="color: #0f1b2d;"><strong>{radio_obu_sim}m</strong></span>
+                <span style="color: #5b6b7f;"> — Aplica a V2I y V2V. </span>
+                <strong style="color: #b9770b;">V2V:</strong>
+                <span style="color: #0f1b2d;"><strong>{"Bidireccional" if v2v_bidireccional else "Dirigida"}</strong></span>
             </div>
             """, unsafe_allow_html=True)
 
@@ -657,8 +673,8 @@ if st.session_state.pipeline_resultados:
                         )
 
                         st.markdown(f"""
-                        <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 0.5rem;">
-                            Mostrando <strong style="color: #06b6d4;">{len(tuplas_filtradas)}</strong> de
+                        <div style="font-size: 0.75rem; color: #5b6b7f; margin-top: 0.5rem;">
+                            Mostrando <strong style="color: #2557a7;">{len(tuplas_filtradas)}</strong> de
                             <strong>{len(tuplas)}</strong> tuplas totales.
                             Cada tupla representa un momento donde un vehículo tiene LoS con un RSU.
                         </div>
@@ -728,8 +744,8 @@ if st.session_state.pipeline_resultados:
                         )
 
                         st.markdown(f"""
-                        <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 0.5rem;">
-                            Mostrando <strong style="color: #eab308;">{len(v2v_filtradas)}</strong> de
+                        <div style="font-size: 0.75rem; color: #5b6b7f; margin-top: 0.5rem;">
+                            Mostrando <strong style="color: #b9770b;">{len(v2v_filtradas)}</strong> de
                             <strong>{len(tuplas_v2v)}</strong> tuplas V2V totales.
                             Cada tupla representa un momento donde dos vehículos tienen LoS directo.
                         </div>
@@ -744,10 +760,10 @@ if st.session_state.pipeline_resultados:
                 with tab_matrices:
                     st.markdown("#### 🔢 Visualización de Matrices de Conectividad")
                     st.markdown("""
-                    <div style="font-size: 0.82rem; color: #94a3b8; margin-bottom: 1rem; line-height: 1.6;">
+                    <div style="font-size: 0.82rem; color: #5b6b7f; margin-bottom: 1rem; line-height: 1.6;">
                         Selecciona un instante de tiempo para visualizar las matrices binarias:<br>
-                        • <strong style="color: #eab308;">Matriz A</strong> (n×n) — Conectividad vehículo–vehículo<br>
-                        • <strong style="color: #06b6d4;">Matriz B</strong> (n×m) — Conectividad vehículo–RSU
+                        • <strong style="color: #b9770b;">Matriz A</strong> (n×n) — Conectividad vehículo–vehículo<br>
+                        • <strong style="color: #2557a7;">Matriz B</strong> (n×m) — Conectividad vehículo–RSU
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -787,8 +803,8 @@ if st.session_state.pipeline_resultados:
                                     # Contar conexiones
                                     total_unos = sum(sum(fila) for fila in A)
                                     st.markdown(f"""
-                                    <div style="font-size: 0.75rem; color: #94a3b8;">
-                                        <strong style="color: #eab308;">A ∈ {{0,1}}^{{{n_v}×{n_v}}}</strong> —
+                                    <div style="font-size: 0.75rem; color: #5b6b7f;">
+                                        <strong style="color: #b9770b;">A ∈ {{0,1}}^{{{n_v}×{n_v}}}</strong> —
                                         {total_unos} conexiones activas en t={ts_seleccionado}s
                                     </div>
                                     """, unsafe_allow_html=True)
@@ -836,8 +852,8 @@ if st.session_state.pipeline_resultados:
                                 )
                                 total_unos_b = sum(sum(fila) for fila in B)
                                 st.markdown(f"""
-                                <div style="font-size: 0.75rem; color: #94a3b8;">
-                                    <strong style="color: #06b6d4;">B ∈ {{0,1}}^{{{n_v_b}×{m_r}}}</strong> —
+                                <div style="font-size: 0.75rem; color: #5b6b7f;">
+                                    <strong style="color: #2557a7;">B ∈ {{0,1}}^{{{n_v_b}×{m_r}}}</strong> —
                                     {total_unos_b} conexiones V2I activas en t={ts_seleccionado}s
                                 </div>
                                 """, unsafe_allow_html=True)
@@ -848,9 +864,9 @@ if st.session_state.pipeline_resultados:
                 with tab_multisalto:
                     st.markdown("#### 🔗 Conectividad Multisalto Vehículo → RSU")
                     st.markdown("""
-                    <div style="font-size: 0.82rem; color: #94a3b8; margin-bottom: 1rem; line-height: 1.6;">
-                        Combina la <strong style="color: #eab308;">Matriz A</strong> (V2V) y la
-                        <strong style="color: #06b6d4;">Matriz B</strong> (V2I) para calcular si un vehículo
+                    <div style="font-size: 0.82rem; color: #5b6b7f; margin-bottom: 1rem; line-height: 1.6;">
+                        Combina la <strong style="color: #b9770b;">Matriz A</strong> (V2V) y la
+                        <strong style="color: #2557a7;">Matriz B</strong> (V2I) para calcular si un vehículo
                         alcanza un RSU <strong>rebotando</strong> a través de otros vehículos (multisalto):<br>
                         • <strong>1 salto:</strong> V → RSU &nbsp;&nbsp;
                         • <strong>2 saltos:</strong> V → V → RSU &nbsp;&nbsp;
@@ -947,11 +963,11 @@ if st.session_state.pipeline_resultados:
                             if sel_matriz.startswith("R"):
                                 h = int(sel_matriz[1:].split(" ")[0])
                                 M = res_ms["R"][h - 1]
-                                color = "#06b6d4"
+                                color = "#2557a7"
                             elif sel_matriz.startswith("S"):
                                 h = int(sel_matriz[1:].split(" ")[0])
                                 M = res_ms["S"][h - 1]
-                                color = "#eab308"
+                                color = "#b9770b"
                             else:
                                 M = res_ms["D"]
                                 color = "#ef4444"
@@ -963,7 +979,7 @@ if st.session_state.pipeline_resultados:
                                 height=min(420, 60 + len(vehiculos_ms) * 35)
                             )
                             st.markdown(f"""
-                            <div style="font-size: 0.75rem; color: #94a3b8;">
+                            <div style="font-size: 0.75rem; color: #5b6b7f;">
                                 <strong style="color: {color};">{sel_matriz}</strong> —
                                 tamaño {M.shape[0]}×{M.shape[1]}, {int(M.sum())} unos,
                                 en t={ts_ms}s (filas = vehículos, columnas = RSU).
@@ -1003,7 +1019,7 @@ if st.session_state.pipeline_resultados:
                             <span>V2I LoS</span>
                         </div>
                         <div class="v2i-legend-item">
-                            <div class="legend-line" style="background: #eab308;"></div>
+                            <div class="legend-line" style="background: #b9770b;"></div>
                             <span>V2V LoS</span>
                         </div>
                     </div>
@@ -1103,3 +1119,168 @@ if st.session_state.pipeline_resultados:
                     "- Todos los edificios bloquean la línea de vista\n\n"
                     "Prueba aumentar el radio de cobertura OBU o el número de vehículos."
                 )
+
+            # ==========================================
+            # MÓDULO 3: OPTIMIZACIÓN DEL DESPLIEGUE DE RSU
+            # ==========================================
+            if tuplas and matrices_v2v:
+                renderizar_divider("🧮 Módulo 3 — Optimización del Despliegue de RSU (docplex/CPLEX)")
+
+                st.markdown("""
+                <div style="font-size: 0.85rem; color: #5b6b7f; margin-bottom: 1rem; line-height: 1.6;">
+                    Toma las matrices de conectividad multisalto generadas arriba, construye el
+                    dataset <strong style="color: #2557a7;">CVR &lt;s, h, v, r&gt;</strong> y resuelve el
+                    modelo de optimización (Urquiza-Aguiar et al.) con
+                    <strong style="color: #22c55e;">docplex/CPLEX</strong> para decidir
+                    <strong>qué RSU desplegar</strong> minimizando el costo de instalación más el
+                    tráfico penalizado por número de saltos. El resultado se dibuja sobre el
+                    mismo plano generado por el frontend.
+                </div>
+                """, unsafe_allow_html=True)
+
+                with st.expander("⚙️ Parámetros de optimización", expanded=True):
+                    col_o1, col_o2, col_o3 = st.columns(3)
+                    with col_o1:
+                        H_opt = st.slider(
+                            "🔢 Máximo de saltos (H)",
+                            min_value=1, max_value=6, value=3, step=1,
+                            key="H_optimizacion",
+                            help="Saltos reales considerados al construir el CVR. "
+                                 "El salto H+1 es la 'desconexión' (RSU artificial r∞)."
+                        )
+                    with col_o2:
+                        limitar_rsu = st.checkbox(
+                            "🎯 Limitar nº de RSU (MaxR)",
+                            value=False,
+                            key="limitar_rsu_opt",
+                            help="Si se activa, restringe cuántas RSU reales puede desplegar "
+                                 "el solver. Si no, no hay tope (MaxR = nº de candidatas)."
+                        )
+                        n_cand = len(rsus_sim)
+                        max_rsu_opt = None
+                        if limitar_rsu:
+                            max_rsu_opt = st.slider(
+                                "MaxR", min_value=1,
+                                max_value=max(1, n_cand),
+                                value=min(10, max(1, n_cand)), step=1,
+                                key="maxr_optimizacion"
+                            )
+                    with col_o3:
+                        radio_cob_opt = st.slider(
+                            "📡 Radio de cobertura en el mapa (m)",
+                            min_value=0, max_value=500, value=200, step=25,
+                            key="radio_cob_opt",
+                            help="Radio dibujado alrededor de cada RSU desplegada (0 = no dibujar)."
+                        )
+
+                def _on_click_optimizar():
+                    st.session_state.ejecutar_optimizacion = True
+                    st.session_state.optimizacion_resultados = None
+
+                st.button(
+                    "🧮 Optimizar Despliegue de RSU",
+                    type="primary",
+                    use_container_width=True,
+                    key="btn_optimizar",
+                    on_click=_on_click_optimizar,
+                    help="Construye el CVR y resuelve el modelo con docplex/CPLEX."
+                )
+
+                # ---- Ejecución de la optimización ----
+                if st.session_state.ejecutar_optimizacion:
+                    st.session_state.ejecutar_optimizacion = False
+
+                    dat_path = os.path.join(
+                        os.path.dirname(OUTPUT_DIR), "optimizacion", "rsu_backend.dat"
+                    )
+
+                    try:
+                        with st.spinner("🧩 Construyendo el dataset CVR desde las matrices multisalto..."):
+                            datos_opt = exportar_dat_desde_memoria(
+                                matrices_v2v, tuplas, rsus_sim, dat_path,
+                                H=H_opt, max_rsu=max_rsu_opt,
+                                solo_rsu_conectados=True,
+                            )
+                        with st.spinner("⚙️ Resolviendo el modelo con docplex/CPLEX..."):
+                            res_opt = optimizar(datos_opt, mostrar_log=False)
+
+                        st.session_state.optimizacion_resultados = {
+                            "resumen": datos_opt["resumen"],
+                            "resultado": res_opt,
+                            "dat_path": dat_path,
+                            "radio_cobertura": radio_cob_opt,
+                        }
+                    except ImportError as e:
+                        st.error(
+                            "❌ No se pudo importar **docplex/CPLEX**. Verifica que estás en "
+                            "el entorno con Python 3.10 y el motor de CPLEX instalado.\n\n"
+                            f"Detalle: {e}"
+                        )
+                    except Exception as e:
+                        st.error(f"❌ Error durante la optimización: {e}")
+
+                # ---- Resultados de la optimización ----
+                if st.session_state.optimizacion_resultados:
+                    opt = st.session_state.optimizacion_resultados
+                    res_opt = opt["resultado"]
+                    resumen_opt = opt["resumen"]
+
+                    st.markdown("##### 📦 Dataset de optimización (CVR)")
+                    col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+                    col_r1.metric("Escenarios", resumen_opt["n_escenarios"])
+                    col_r2.metric("Vehículos", resumen_opt["n_vehiculos"])
+                    col_r3.metric("RSU candidatas", resumen_opt["n_rsu_candidatos"])
+                    col_r4.metric("Tuplas CVR", resumen_opt["n_tuplas_CVR"])
+
+                    if res_opt["objetivo"] is None:
+                        st.error(
+                            f"⚠️ El solver no entregó una solución. Estado: "
+                            f"**{res_opt['status']}**"
+                        )
+                    else:
+                        st.markdown("##### ✅ Solución óptima")
+                        col_s1, col_s2, col_s3 = st.columns(3)
+                        col_s1.metric("Valor objetivo", f"{res_opt['objetivo']:.2f}")
+                        col_s2.metric("RSU desplegadas", res_opt["n_rsu_elegidos"])
+                        col_s3.metric("Estado", res_opt["status"])
+
+                        ids_desplegados = res_opt["seleccionados_backend"]
+
+                        st.markdown(f"""
+                        <div style="font-size: 0.8rem; color: #5b6b7f; margin: 0.4rem 0 0.8rem;">
+                            El solver eligió <strong style="color:#22c55e;">{len(ids_desplegados)}</strong>
+                            RSU (de {resumen_opt['n_rsu_candidatos']} candidatas) que sirven toda la
+                            demanda al menor costo. La función objetivo combina costo de instalación
+                            + tráfico penalizado por saltos.
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        with st.expander("📋 IDs de las RSU desplegadas"):
+                            st.write(ids_desplegados)
+                            st.caption(f"Dataset .dat regenerado en: {opt['dat_path']}")
+
+                        # ---- Mapa del despliegue óptimo ----
+                        st.markdown("##### 🗺️ Despliegue óptimo sobre el plano generado")
+                        st.markdown("""
+                        <div class="v2i-legend">
+                            <div class="v2i-legend-item">
+                                <div class="legend-dot" style="background: #22c55e;"></div>
+                                <span>RSU desplegada (óptimo)</span>
+                            </div>
+                            <div class="v2i-legend-item">
+                                <div class="legend-dot" style="background: #cbd5e1;"></div>
+                                <span>Candidata no desplegada</span>
+                            </div>
+                            <div class="v2i-legend-item">
+                                <div class="legend-dot" style="background: #fb923c;"></div>
+                                <span>Edificios</span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        mapa_opt = crear_mapa_optimizacion(
+                            rsus_sim, ids_desplegados, edificios_sim, proy_sim,
+                            radio_cobertura_m=opt["radio_cobertura"]
+                        )
+                        st_folium(mapa_opt, width=None, height=560,
+                                  key="mapa_optimizacion", returned_objects=[])

@@ -1,711 +1,449 @@
 """
-Módulo de Estilos CSS Premium
-=============================
-Inyecta estilos personalizados en la aplicación Streamlit
-para lograr una interfaz visual moderna y profesional.
+Módulo de Estilos — Consola científica/ingeniería (tema claro)
+==============================================================
+Inyecta el CSS de la interfaz SmartCityNet y expone helpers de render.
+
+Dirección de diseño: "instrumento científico", no web decorativa. Fondo claro
+frío, un único acento azul acero, verde reservado como color SEMÁNTICO para
+"óptimo/desplegado", todos los datos en monoespaciada con cifras tabulares,
+hairlines de plano de ingeniería y un motivo sutil de graticula cartográfica.
+El tema claro se fija además en .streamlit/config.toml.
 """
 
 import streamlit as st
 
-# Paleta de colores principal
+# Paleta — claro científico/ingeniería
 COLORES = {
-    "bg_primary": "#0a0e1a",
-    "bg_secondary": "#111827",
-    "bg_card": "rgba(17, 24, 39, 0.8)",
-    "accent_cyan": "#06b6d4",
-    "accent_blue": "#3b82f6",
-    "accent_purple": "#8b5cf6",
-    "accent_emerald": "#10b981",
-    "accent_amber": "#f59e0b",
-    "accent_red": "#ef4444",
-    "text_primary": "#f1f5f9",
-    "text_secondary": "#94a3b8",
-    "border": "rgba(148, 163, 184, 0.12)",
+    "ground": "#f6f7f9",
+    "surface": "#ffffff",
+    "surface_2": "#fbfcfd",
+    "ink": "#0f1b2d",
+    "muted": "#5b6b7f",
+    "faint": "#8695a6",
+    "line": "#e2e6ec",
+    "line_strong": "#cfd6df",
+    "accent": "#2557a7",
+    "accent_deep": "#16407f",
+    "accent_wash": "#eaf1fb",
+    "ok": "#0f9d6b",
+    "ok_wash": "#e6f6ee",
+    "warn": "#b9770b",
+    "warn_wash": "#fbf3e3",
+    "crit": "#c0392b",
+    "grid": "rgba(37,87,167,0.05)",
+    # compatibilidad hacia atrás (nombres antiguos usados en HTML de app.py)
+    "text_primary": "#0f1b2d",
+    "text_secondary": "#5b6b7f",
+    "accent_cyan": "#2557a7",
+    "accent_blue": "#2557a7",
+    "accent_purple": "#2557a7",
+    "accent_emerald": "#0f9d6b",
+    "accent_amber": "#b9770b",
+    "accent_red": "#c0392b",
+    "border": "#e2e6ec",
 }
+
+FONT_SANS = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+FONT_MONO = "ui-monospace, 'Cascadia Code', 'SF Mono', 'JetBrains Mono', Consolas, monospace"
 
 
 def inyectar_css():
-    """Inyecta los estilos CSS personalizados en la app de Streamlit."""
+    """Inyecta el CSS de la consola clara en la app de Streamlit."""
+    C = COLORES
     st.markdown(f"""
     <style>
-        /* ===== GOOGLE FONT ===== */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
-
-        /* ===== RESET Y BASE ===== */
-        .stApp {{
-            font-family: 'Inter', sans-serif;
-        }}
-        
+        /* ===== BASE ===== */
+        .stApp {{ background: {C['ground']}; }}
+        html, body, [class*="css"] {{ font-family: {FONT_SANS}; }}
         .main .block-container {{
-            padding-top: 1.5rem;
-            padding-bottom: 2rem;
-            max-width: 1300px;
+            padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1200px;
         }}
+        .mono {{ font-family: {FONT_MONO}; font-variant-numeric: tabular-nums; }}
 
-        /* ===== ENCABEZADO HERO ===== */
-        .hero-header {{
-            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 40%, #172554 100%);
-            border: 1px solid rgba(139, 92, 246, 0.2);
-            border-radius: 16px;
-            padding: 2rem 2rem;
-            margin-bottom: 1.5rem;
-            position: relative;
-            overflow: hidden;
-        }}
-        
-        .hero-header::before {{
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 3px;
-            background: linear-gradient(90deg, {COLORES["accent_cyan"]}, {COLORES["accent_purple"]}, {COLORES["accent_blue"]}, {COLORES["accent_cyan"]});
-            background-size: 300% 100%;
-            animation: gradient-slide 4s ease infinite;
-        }}
-        
-        .hero-header::after {{
-            content: '';
-            position: absolute;
-            top: -50%;
-            right: -10%;
-            width: 300px;
-            height: 300px;
-            background: radial-gradient(circle, rgba(139, 92, 246, 0.08) 0%, transparent 70%);
-            pointer-events: none;
-        }}
-        
-        @keyframes gradient-slide {{
-            0%, 100% {{ background-position: 0% 50%; }}
-            50% {{ background-position: 100% 50%; }}
-        }}
-        
-        .hero-top {{
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 0.5rem;
-        }}
-        
-        .hero-title {{
-            font-size: 1.8rem;
-            font-weight: 800;
-            background: linear-gradient(135deg, {COLORES["accent_cyan"]}, {COLORES["accent_blue"]}, {COLORES["accent_purple"]});
-            background-size: 200% 200%;
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            animation: text-gradient 6s ease infinite;
-            margin-bottom: 0.4rem;
-            letter-spacing: -0.02em;
-        }}
-        
-        @keyframes text-gradient {{
-            0%, 100% {{ background-position: 0% 50%; }}
-            50% {{ background-position: 100% 50%; }}
-        }}
-        
-        .hero-subtitle {{
-            color: {COLORES["text_secondary"]};
-            font-size: 0.88rem;
-            font-weight: 400;
-            line-height: 1.6;
-            max-width: 650px;
-        }}
-        
-        .hero-badge {{
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            background: rgba(6, 182, 212, 0.1);
-            border: 1px solid rgba(6, 182, 212, 0.25);
-            border-radius: 100px;
-            padding: 4px 14px;
-            font-size: 0.72rem;
-            font-weight: 600;
-            color: {COLORES["accent_cyan"]};
-            margin-bottom: 0.8rem;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-        }}
-        
-        .hero-tech-tags {{
-            display: flex;
-            gap: 8px;
-            margin-top: 0.8rem;
-            flex-wrap: wrap;
-        }}
-        
-        .tech-tag {{
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 6px;
-            padding: 3px 10px;
-            font-size: 0.68rem;
-            font-weight: 500;
-            color: {COLORES["text_secondary"]};
-            font-family: 'JetBrains Mono', monospace;
-        }}
-
-        /* ===== LABEL DEL MAPA ===== */
-        .map-label {{
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 0.6rem;
-        }}
-        
-        .map-label-text {{
-            font-size: 0.78rem;
-            font-weight: 600;
-            color: {COLORES["text_secondary"]};
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-        }}
-        
-        .map-label-dot {{
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: {COLORES["accent_emerald"]};
-            animation: pulse-dot 2s ease infinite;
-        }}
-        
-        @keyframes pulse-dot {{
-            0%, 100% {{ opacity: 1; transform: scale(1); }}
-            50% {{ opacity: 0.5; transform: scale(0.8); }}
-        }}
-
-        /* ===== TARJETAS GLASSMORPHISM ===== */
-        .glass-card {{
-            background: linear-gradient(145deg, rgba(17, 24, 39, 0.95), rgba(30, 27, 75, 0.5));
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid {COLORES["border"]};
-            border-radius: 14px;
-            padding: 1.25rem;
-            margin-bottom: 0.8rem;
-            transition: border-color 0.3s ease, box-shadow 0.3s ease;
-        }}
-        
-        .glass-card:hover {{
-            border-color: rgba(139, 92, 246, 0.25);
-            box-shadow: 0 4px 20px rgba(139, 92, 246, 0.06);
-        }}
-        
-        .card-title {{
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: {COLORES["text_secondary"]};
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            margin-bottom: 0.8rem;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        
-        .card-title .icon {{
-            font-size: 1rem;
-        }}
-
-        /* ===== COORDENADAS DISPLAY ===== */
-        .coord-grid {{
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-        }}
-        
-        .coord-item {{
-            background: rgba(6, 182, 212, 0.05);
-            border: 1px solid rgba(6, 182, 212, 0.12);
-            border-radius: 10px;
-            padding: 10px 12px;
-            transition: background 0.3s ease;
-        }}
-        
-        .coord-item:hover {{
-            background: rgba(6, 182, 212, 0.08);
-        }}
-        
-        .coord-label {{
-            font-size: 0.65rem;
-            font-weight: 600;
-            color: {COLORES["text_secondary"]};
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            margin-bottom: 3px;
-        }}
-        
-        .coord-value {{
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.88rem;
-            font-weight: 500;
-            color: {COLORES["accent_cyan"]};
-        }}
-
-        /* ===== PANEL DE INSTRUCCIONES ===== */
-        .step {{
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            margin-bottom: 10px;
-        }}
-        
-        .step-num {{
-            background: linear-gradient(135deg, {COLORES["accent_blue"]}, {COLORES["accent_purple"]});
-            color: white;
-            font-size: 0.65rem;
-            font-weight: 700;
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-            margin-top: 2px;
-        }}
-        
-        .step-text {{
-            color: {COLORES["text_secondary"]};
-            font-size: 0.8rem;
-            line-height: 1.45;
-        }}
-
-        /* ===== BOTÓN PRINCIPAL ===== */
-        .stButton > button[kind="primary"] {{
-            background: linear-gradient(135deg, {COLORES["accent_cyan"]} 0%, {COLORES["accent_blue"]} 50%, {COLORES["accent_purple"]} 100%) !important;
-            background-size: 200% 200% !important;
-            animation: btn-gradient 5s ease infinite !important;
-            color: white !important;
-            border: none !important;
-            border-radius: 12px !important;
-            padding: 0.75rem 2rem !important;
-            font-weight: 700 !important;
-            font-size: 0.95rem !important;
-            font-family: 'Inter', sans-serif !important;
-            letter-spacing: 0.02em !important;
-            transition: box-shadow 0.4s ease, transform 0.2s ease !important;
-            box-shadow: 0 4px 20px rgba(6, 182, 212, 0.3) !important;
-        }}
-        
-        @keyframes btn-gradient {{
-            0%, 100% {{ background-position: 0% 50%; }}
-            50% {{ background-position: 100% 50%; }}
-        }}
-        
-        .stButton > button[kind="primary"]:hover {{
-            box-shadow: 0 8px 30px rgba(139, 92, 246, 0.4) !important;
-            transform: translateY(-2px) !important;
-        }}
-        
-        .stButton > button[kind="primary"]:active {{
-            transform: translateY(0px) !important;
-            box-shadow: 0 2px 10px rgba(6, 182, 212, 0.2) !important;
-        }}
-
-        /* ===== PIPELINE STEP (log del backend) ===== */
-        .pipeline-step {{
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            padding: 14px 18px;
-            border-radius: 12px;
-            margin-bottom: 8px;
-            transition: all 0.3s ease;
-        }}
-        
-        .pipeline-step.success {{
-            background: rgba(16, 185, 129, 0.06);
-            border: 1px solid rgba(16, 185, 129, 0.18);
-        }}
-        
-        .pipeline-step.error {{
-            background: rgba(239, 68, 68, 0.06);
-            border: 1px solid rgba(239, 68, 68, 0.18);
-        }}
-        
-        .pipeline-step.running {{
-            background: rgba(245, 158, 11, 0.06);
-            border: 1px solid rgba(245, 158, 11, 0.18);
-            animation: pulse-border 2s ease infinite;
-        }}
-        
-        @keyframes pulse-border {{
-            0%, 100% {{ border-color: rgba(245, 158, 11, 0.18); }}
-            50% {{ border-color: rgba(245, 158, 11, 0.35); }}
-        }}
-        
-        .step-icon {{
-            font-size: 1.2rem;
-            flex-shrink: 0;
-        }}
-        
-        .step-info {{
-            flex-grow: 1;
-        }}
-        
-        .step-name {{
-            font-weight: 600;
-            font-size: 0.88rem;
-            color: {COLORES["text_primary"]};
-        }}
-        
-        .step-detail {{
-            font-size: 0.75rem;
-            color: {COLORES["text_secondary"]};
-            font-family: 'JetBrains Mono', monospace;
-            margin-top: 2px;
-            word-break: break-all;
-        }}
-
-        /* ===== RESUMEN FINAL ===== */
-        .summary-card {{
-            background: linear-gradient(145deg, rgba(16, 185, 129, 0.06), rgba(6, 182, 212, 0.04));
-            border: 1px solid rgba(16, 185, 129, 0.18);
-            border-radius: 14px;
-            padding: 1.5rem;
-            margin-top: 1rem;
-            position: relative;
-            overflow: hidden;
-        }}
-        
-        .summary-card::before {{
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 2px;
-            background: linear-gradient(90deg, {COLORES["accent_emerald"]}, {COLORES["accent_cyan"]});
-        }}
-        
-        .summary-title {{
-            font-size: 1.05rem;
-            font-weight: 700;
-            color: {COLORES["accent_emerald"]};
-            margin-bottom: 0.8rem;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        
-        .summary-stats {{
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-        }}
-        
-        .summary-stat {{
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            border-radius: 8px;
-            padding: 8px 16px;
-            font-size: 0.85rem;
-            transition: background 0.3s;
-        }}
-        
-        .summary-stat:hover {{
-            background: rgba(255, 255, 255, 0.07);
-        }}
-        
-        .stat-number {{
-            font-family: 'JetBrains Mono', monospace;
-            font-weight: 700;
-            color: {COLORES["accent_cyan"]};
-            font-size: 1.1rem;
-        }}
-        
-        .stat-label {{
-            color: {COLORES["text_secondary"]};
-            font-size: 0.8rem;
-        }}
-
-        /* ===== ESTADO VACÍO ===== */
-        .empty-state {{
-            text-align: center;
-            padding: 1.5rem 1rem;
-            color: {COLORES["text_secondary"]};
-        }}
-        
-        .empty-state .empty-icon {{
-            font-size: 2.5rem;
-            margin-bottom: 0.6rem;
-            opacity: 0.4;
-            display: block;
-        }}
-        
-        .empty-state .msg {{
-            font-size: 0.82rem;
-            line-height: 1.5;
-        }}
-
-        /* ===== SECCIÓN DIVIDER ===== */
-        .section-divider {{
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin: 1.5rem 0 1rem 0;
-        }}
-        
-        .section-divider .line {{
-            flex-grow: 1;
-            height: 1px;
-            background: linear-gradient(90deg, transparent, {COLORES["border"]}, transparent);
-        }}
-        
-        .section-divider .label {{
-            font-size: 0.78rem;
-            font-weight: 600;
-            color: {COLORES["text_secondary"]};
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            white-space: nowrap;
-        }}
-
-        /* ===== ARCHIVOS GENERADOS ===== */
-        .file-list {{
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            margin-top: 10px;
-        }}
-        
-        .file-item {{
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 10px;
-            background: rgba(255, 255, 255, 0.02);
-            border-radius: 6px;
-            font-size: 0.78rem;
-        }}
-        
-        .file-icon {{ color: {COLORES["accent_amber"]}; }}
-        .file-name {{
-            font-family: 'JetBrains Mono', monospace;
-            color: {COLORES["text_primary"]};
-        }}
-        .file-desc {{
-            color: {COLORES["text_secondary"]};
-            margin-left: auto;
-            font-size: 0.72rem;
-        }}
-        
-        /* ===== OCULTAR ELEMENTOS STREAMLIT ===== */
+        /* ===== OCULTAR CHROME DE STREAMLIT ===== */
         #MainMenu {{ visibility: hidden; }}
         footer {{ visibility: hidden; }}
-        header {{ visibility: hidden; }}
-        
-        /* ===== AJUSTES AL MAPA DE FOLIUM ===== */
-        iframe {{
-            border-radius: 14px !important;
-            border: 1px solid rgba(59, 130, 246, 0.2) !important;
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3) !important;
-        }}
-        
-        /* ===== TOOLTIPS Y SPINNERS ===== */
-        .stSpinner > div {{
-            border-color: {COLORES["accent_cyan"]} !important;
-        }}
+        header[data-testid="stHeader"] {{ background: transparent; height: 0; }}
 
-        /* ===== SECCIÓN SIMULACIÓN V2I ===== */
-        .sim-stats-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-            gap: 10px;
-            margin-bottom: 1rem;
-        }}
-
-        .sim-stat-card {{
-            background: linear-gradient(145deg, rgba(17, 24, 39, 0.9), rgba(30, 27, 75, 0.4));
-            border: 1px solid {COLORES["border"]};
+        /* ===== ENCABEZADO (hero con graticula) ===== */
+        .hero-header {{
+            position: relative; overflow: hidden;
+            background: {C['surface']};
+            border: 1px solid {C['line']};
             border-radius: 12px;
-            padding: 16px;
-            text-align: center;
-            transition: all 0.3s ease;
+            padding: 1.4rem 1.6rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 1px 2px rgba(15,27,45,0.04), 0 6px 18px rgba(15,27,45,0.05);
+        }}
+        .hero-header::before {{
+            content: ""; position: absolute; inset: 0; pointer-events: none;
+            background-image:
+                linear-gradient({C['grid']} 1px, transparent 1px),
+                linear-gradient(90deg, {C['grid']} 1px, transparent 1px);
+            background-size: 34px 34px;
+            -webkit-mask-image: linear-gradient(105deg, #000 0%, transparent 62%);
+            mask-image: linear-gradient(105deg, #000 0%, transparent 62%);
+        }}
+        .hero-in {{ position: relative; }}
+        .hero-eyebrow {{
+            font-family: {FONT_MONO}; font-size: 0.68rem; letter-spacing: 0.14em;
+            text-transform: uppercase; color: {C['faint']};
+        }}
+        .hero-title {{
+            font-size: 1.55rem; font-weight: 700; color: {C['ink']};
+            letter-spacing: -0.02em; margin: 0.35rem 0 0.3rem; line-height: 1.15;
+        }}
+        .hero-subtitle {{
+            color: {C['muted']}; font-size: 0.86rem; line-height: 1.55; max-width: 72ch;
+        }}
+        .hero-tech-tags {{ display: flex; gap: 7px; margin-top: 0.85rem; flex-wrap: wrap; }}
+        .tech-tag {{
+            background: {C['surface_2']}; border: 1px solid {C['line']}; border-radius: 5px;
+            padding: 3px 9px; font-size: 0.68rem; color: {C['muted']}; font-family: {FONT_MONO};
+        }}
+        /* badge antiguo → chip discreto */
+        .hero-badge {{
+            display: inline-flex; align-items: center; gap: 6px;
+            background: {C['accent_wash']}; border: 1px solid {C['line']};
+            border-radius: 6px; padding: 3px 10px; font-size: 0.68rem; font-weight: 600;
+            color: {C['accent']}; font-family: {FONT_MONO};
+            letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 0.5rem;
         }}
 
-        .sim-stat-card:hover {{
-            border-color: rgba(6, 182, 212, 0.3);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(6, 182, 212, 0.1);
+        /* ===== STEPPER DE MÓDULOS M1 · M2 · M3 ===== */
+        .module-stepper {{
+            display: flex; border: 1px solid {C['line']}; border-radius: 12px;
+            overflow: hidden; background: {C['surface']}; margin-bottom: 1.1rem;
+            box-shadow: 0 1px 2px rgba(15,27,45,0.04);
+        }}
+        .ms-step {{
+            flex: 1; display: flex; align-items: center; gap: 11px;
+            padding: 12px 16px; border-right: 1px solid {C['line']};
+        }}
+        .ms-step:last-child {{ border-right: 0; }}
+        .ms-n {{
+            font-family: {FONT_MONO}; font-size: 0.72rem; font-weight: 700;
+            width: 26px; height: 26px; border-radius: 6px; display: flex;
+            align-items: center; justify-content: center; flex-shrink: 0;
+            background: {C['accent_wash']}; color: {C['accent']};
+        }}
+        .ms-step.done .ms-n {{ background: {C['ok_wash']}; color: {C['ok']}; }}
+        .ms-step.active .ms-n {{ background: {C['accent']}; color: #fff; }}
+        .ms-t {{ font-size: 0.78rem; font-weight: 600; color: {C['ink']}; }}
+        .ms-s {{ font-size: 0.68rem; color: {C['faint']}; font-family: {FONT_MONO}; }}
+
+        /* ===== LABEL DEL MAPA ===== */
+        .map-label {{ display: flex; align-items: center; gap: 8px; margin-bottom: 0.5rem; }}
+        .map-label-text {{
+            font-size: 0.72rem; font-weight: 600; color: {C['muted']};
+            text-transform: uppercase; letter-spacing: 0.08em; font-family: {FONT_MONO};
+        }}
+        .map-label-dot {{ width: 8px; height: 8px; border-radius: 50%; background: {C['ok']}; }}
+
+        /* ===== TARJETAS ===== */
+        .glass-card {{
+            background: {C['surface']}; border: 1px solid {C['line']};
+            border-radius: 10px; padding: 1.1rem 1.15rem; margin-bottom: 0.7rem;
+            box-shadow: 0 1px 2px rgba(15,27,45,0.04);
+        }}
+        .card-title {{
+            font-size: 0.7rem; font-weight: 600; color: {C['muted']};
+            text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.7rem;
+            display: flex; align-items: center; gap: 8px; font-family: {FONT_MONO};
+        }}
+        .card-title .icon {{ font-size: 0.95rem; }}
+
+        /* ===== COORDENADAS ===== */
+        .coord-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }}
+        .coord-item {{
+            background: {C['surface_2']}; border: 1px solid {C['line']};
+            border-radius: 8px; padding: 9px 11px;
+        }}
+        .coord-label {{
+            font-size: 0.62rem; font-weight: 600; color: {C['faint']};
+            text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px;
+            font-family: {FONT_MONO};
+        }}
+        .coord-value {{
+            font-family: {FONT_MONO}; font-size: 0.85rem; font-weight: 600;
+            color: {C['accent']}; font-variant-numeric: tabular-nums;
         }}
 
+        /* ===== INSTRUCCIONES (pasos) ===== */
+        .step {{ display: flex; align-items: flex-start; gap: 10px; margin-bottom: 9px; }}
+        .step-num {{
+            background: {C['accent']}; color: #fff; font-size: 0.62rem; font-weight: 700;
+            width: 19px; height: 19px; border-radius: 5px; display: flex;
+            align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px;
+            font-family: {FONT_MONO};
+        }}
+        .step-text {{ color: {C['muted']}; font-size: 0.8rem; line-height: 1.45; }}
+        .step-text strong {{ color: {C['ink']}; }}
+
+        /* ===== BOTONES ===== */
+        .stButton > button {{
+            border-radius: 8px !important; font-weight: 600 !important;
+            font-family: {FONT_SANS} !important; transition: background .15s, border-color .15s !important;
+        }}
+        .stButton > button[kind="primary"] {{
+            background: {C['accent']} !important; color: #fff !important;
+            border: 1px solid {C['accent']} !important; padding: 0.6rem 1.4rem !important;
+            font-size: 0.9rem !important; box-shadow: none !important; letter-spacing: 0.01em !important;
+        }}
+        .stButton > button[kind="primary"]:hover {{
+            background: {C['accent_deep']} !important; border-color: {C['accent_deep']} !important;
+        }}
+        .stButton > button[kind="secondary"] {{
+            background: {C['surface']} !important; color: {C['ink']} !important;
+            border: 1px solid {C['line_strong']} !important;
+        }}
+        .stButton > button[kind="secondary"]:hover {{
+            border-color: {C['accent']} !important; color: {C['accent']} !important;
+        }}
+
+        /* ===== LOG DEL PIPELINE ===== */
+        .pipeline-step {{
+            display: flex; align-items: center; gap: 12px; padding: 11px 15px;
+            border-radius: 9px; margin-bottom: 7px; border: 1px solid {C['line']};
+            background: {C['surface']};
+        }}
+        .pipeline-step.success {{ background: {C['ok_wash']}; border-color: rgba(15,157,107,0.28); }}
+        .pipeline-step.error {{ background: #fdecea; border-color: rgba(192,57,43,0.28); }}
+        .pipeline-step.running {{ background: {C['warn_wash']}; border-color: rgba(185,119,11,0.3); }}
+        .step-icon {{ font-size: 1.05rem; flex-shrink: 0; }}
+        .step-info {{ flex-grow: 1; }}
+        .step-name {{ font-weight: 600; font-size: 0.85rem; color: {C['ink']}; }}
+        .step-detail {{
+            font-size: 0.72rem; color: {C['muted']}; font-family: {FONT_MONO};
+            margin-top: 2px; word-break: break-all;
+        }}
+
+        /* ===== RESUMEN ===== */
+        .summary-card {{
+            background: {C['ok_wash']}; border: 1px solid rgba(15,157,107,0.28);
+            border-radius: 10px; padding: 1.2rem 1.3rem; margin-top: 0.9rem;
+        }}
+        .summary-title {{
+            font-size: 0.98rem; font-weight: 700; color: {C['ok']}; margin-bottom: 0.7rem;
+            display: flex; align-items: center; gap: 8px;
+        }}
+        .summary-stats {{ display: flex; gap: 9px; flex-wrap: wrap; }}
+        .summary-stat {{
+            display: inline-flex; align-items: center; gap: 6px; background: {C['surface']};
+            border: 1px solid {C['line']}; border-radius: 7px; padding: 7px 14px; font-size: 0.82rem;
+        }}
+        .stat-number {{
+            font-family: {FONT_MONO}; font-weight: 700; color: {C['accent']}; font-size: 1.05rem;
+            font-variant-numeric: tabular-nums;
+        }}
+        .stat-label {{ color: {C['muted']}; font-size: 0.78rem; }}
+        .file-list {{ display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }}
+        .file-item {{
+            display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+            background: {C['surface']}; border: 1px solid {C['line']}; border-radius: 6px; font-size: 0.76rem;
+        }}
+        .file-icon {{ color: {C['warn']}; }}
+        .file-name {{ font-family: {FONT_MONO}; color: {C['ink']}; }}
+        .file-desc {{ color: {C['muted']}; margin-left: auto; font-size: 0.7rem; }}
+
+        /* ===== ESTADO VACÍO ===== */
+        .empty-state {{ text-align: center; padding: 1.3rem 1rem; color: {C['faint']}; }}
+        .empty-state .empty-icon {{ font-size: 2.2rem; margin-bottom: 0.5rem; opacity: 0.5; display: block; }}
+        .empty-state .msg {{ font-size: 0.8rem; line-height: 1.5; }}
+
+        /* ===== DIVIDER DE SECCIÓN ===== */
+        .section-divider {{ display: flex; align-items: center; gap: 12px; margin: 1.6rem 0 1rem; }}
+        .section-divider .line {{ flex-grow: 1; height: 1px; background: {C['line']}; }}
+        .section-divider .label {{
+            font-size: 0.74rem; font-weight: 700; color: {C['accent']};
+            letter-spacing: 0.06em; white-space: nowrap; font-family: {FONT_MONO};
+            background: {C['accent_wash']}; padding: 3px 10px; border-radius: 6px;
+        }}
+
+        /* ===== TILES DE ESTADÍSTICAS ===== */
+        .sim-stats-grid {{
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 11px; margin-bottom: 1rem;
+        }}
+        .sim-stat-card {{
+            position: relative; background: {C['surface']}; border: 1px solid {C['line']};
+            border-radius: 8px; padding: 14px 15px 14px 18px;
+            box-shadow: 0 1px 2px rgba(15,27,45,0.04);
+        }}
+        .sim-stat-card::before {{
+            content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px;
+            border-radius: 3px; background: {C['accent']};
+        }}
         .sim-stat-value {{
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 1.4rem;
-            font-weight: 700;
-            color: {COLORES["accent_cyan"]};
-            margin-bottom: 4px;
+            font-family: {FONT_MONO}; font-size: 1.35rem; font-weight: 700; color: {C['ink']};
+            font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
         }}
-
         .sim-stat-label {{
-            font-size: 0.7rem;
-            font-weight: 500;
-            color: {COLORES["text_secondary"]};
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
+            font-size: 0.66rem; font-weight: 600; color: {C['faint']};
+            text-transform: uppercase; letter-spacing: 0.06em; margin-top: 3px;
         }}
+        .sim-stat-card.purple::before {{ background: {C['accent']}; }}
+        .sim-stat-card.emerald::before {{ background: {C['ok']}; }}
+        .sim-stat-card.amber::before {{ background: {C['warn']}; }}
+        .sim-stat-card.red::before {{ background: {C['crit']}; }}
+        .sim-stat-card.emerald .sim-stat-value {{ color: {C['ok']}; }}
 
-        .sim-stat-card.purple .sim-stat-value {{ color: {COLORES["accent_purple"]}; }}
-        .sim-stat-card.emerald .sim-stat-value {{ color: {COLORES["accent_emerald"]}; }}
-        .sim-stat-card.amber .sim-stat-value {{ color: {COLORES["accent_amber"]}; }}
-        .sim-stat-card.red .sim-stat-value {{ color: {COLORES["accent_red"]}; }}
-
-        /* ===== TABLA DE TUPLAS ===== */
-        .tupla-tabla-header {{
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 0.6rem;
-        }}
-
-        .tupla-tabla-header .titulo {{
-            font-size: 0.9rem;
-            font-weight: 600;
-            color: {COLORES["text_primary"]};
-        }}
-
+        /* ===== CABECERA DE TABLA DE TUPLAS ===== */
+        .tupla-tabla-header {{ display: flex; align-items: center; gap: 10px; margin-bottom: 0.6rem; }}
+        .tupla-tabla-header .titulo {{ font-size: 0.88rem; font-weight: 600; color: {C['ink']}; }}
         .tupla-tabla-header .badge {{
-            background: rgba(6, 182, 212, 0.1);
-            border: 1px solid rgba(6, 182, 212, 0.2);
-            border-radius: 100px;
-            padding: 2px 10px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            color: {COLORES["accent_cyan"]};
-            font-family: 'JetBrains Mono', monospace;
+            background: {C['accent_wash']}; border: 1px solid {C['line']}; border-radius: 6px;
+            padding: 2px 9px; font-size: 0.68rem; font-weight: 600; color: {C['accent']};
+            font-family: {FONT_MONO};
         }}
 
-        /* ===== LEYENDA V2I ===== */
+        /* ===== LEYENDA ===== */
         .v2i-legend {{
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-            align-items: center;
-            padding: 8px 14px;
-            background: rgba(17, 24, 39, 0.6);
-            border: 1px solid {COLORES["border"]};
-            border-radius: 10px;
-            margin-bottom: 0.8rem;
-            font-size: 0.75rem;
-            color: {COLORES["text_secondary"]};
+            display: flex; flex-wrap: wrap; gap: 14px; align-items: center; padding: 8px 13px;
+            background: {C['surface_2']}; border: 1px solid {C['line']}; border-radius: 8px;
+            margin-bottom: 0.8rem; font-size: 0.74rem; color: {C['muted']};
         }}
+        .v2i-legend-item {{ display: flex; align-items: center; gap: 5px; }}
+        .legend-dot {{ width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }}
+        .legend-line {{ width: 18px; height: 3px; border-radius: 2px; flex-shrink: 0; }}
 
-        .v2i-legend-item {{
-            display: flex;
-            align-items: center;
-            gap: 5px;
+        /* ===== TEXTO DESCRIPTIVO REUTILIZABLE ===== */
+        .desc {{ font-size: 0.82rem; color: {C['muted']}; line-height: 1.55; }}
+        .desc strong {{ color: {C['ink']}; }}
+
+        /* ===== WIDGETS NATIVOS DE STREAMLIT ===== */
+        [data-testid="stMetric"] {{
+            background: {C['surface']}; border: 1px solid {C['line']}; border-radius: 8px;
+            padding: 13px 16px; box-shadow: 0 1px 2px rgba(15,27,45,0.04);
         }}
-
-        .legend-dot {{
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            flex-shrink: 0;
+        [data-testid="stMetricValue"] {{
+            font-family: {FONT_MONO}; font-variant-numeric: tabular-nums;
+            font-weight: 700; color: {C['ink']};
         }}
+        [data-testid="stMetricLabel"] {{ color: {C['muted']}; }}
+        .stTabs [data-baseweb="tab-list"] {{ gap: 4px; border-bottom: 1px solid {C['line']}; }}
+        .stTabs [data-baseweb="tab"] {{
+            font-size: 0.82rem; font-weight: 600; color: {C['muted']}; padding: 8px 14px;
+        }}
+        .stTabs [aria-selected="true"] {{ color: {C['accent']}; }}
+        [data-testid="stExpander"] {{
+            border: 1px solid {C['line']} !important; border-radius: 9px !important;
+            background: {C['surface']} !important;
+        }}
+        [data-testid="stExpander"] summary {{ font-size: 0.82rem; font-weight: 600; color: {C['ink']}; }}
+        .stSpinner > div {{ border-top-color: {C['accent']} !important; }}
+        .stSlider [data-baseweb="slider"] [role="slider"] {{ border-color: {C['accent']} !important; }}
+        code {{ color: {C['accent']}; background: {C['accent_wash']}; padding: 1px 5px; border-radius: 4px; }}
 
-        .legend-line {{
-            width: 18px;
-            height: 3px;
-            border-radius: 2px;
-            flex-shrink: 0;
+        /* ===== MAPA DE FOLIUM ENMARCADO ===== */
+        iframe {{
+            border-radius: 10px !important; border: 1px solid {C['line_strong']} !important;
+            box-shadow: 0 1px 2px rgba(15,27,45,0.05), 0 8px 24px rgba(15,27,45,0.06) !important;
         }}
     </style>
     """, unsafe_allow_html=True)
 
 
 def renderizar_header():
-    """Renderiza el encabezado hero de la aplicación."""
+    """Encabezado con eyebrow, título y chips de tecnología."""
     st.markdown("""
     <div class="hero-header">
-        <div class="hero-badge">🛰️ Módulo 1 & 2 — Simulación VANET</div>
-        <div class="hero-title">Generador de Escenarios VANET</div>
+      <div class="hero-in">
+        <div class="hero-eyebrow">Redes vehiculares ad-hoc · EPN · TIC</div>
+        <div class="hero-title">SmartCityNet — Consola de simulación y optimización VANET</div>
         <div class="hero-subtitle">
-            Selecciona un área geográfica en el mapa, descarga la topología desde OpenStreetMap,
-            genera automáticamente la red vial con SUMO, y simula la conectividad V2I
-            (Vehicle-to-Infrastructure) con detección de línea de vista directa.
+            Selecciona un área en el mapa, genera la red vial con SUMO, simula la conectividad
+            V2V/V2I con línea de vista y resuelve el despliegue de RSU con CPLEX — todo en un mismo flujo.
         </div>
         <div class="hero-tech-tags">
             <span class="tech-tag">OpenStreetMap</span>
             <span class="tech-tag">SUMO</span>
-            <span class="tech-tag">netconvert</span>
-            <span class="tech-tag">polyconvert</span>
-            <span class="tech-tag">randomTrips</span>
-            <span class="tech-tag">FCD</span>
             <span class="tech-tag">Line of Sight</span>
+            <span class="tech-tag">Multisalto</span>
+            <span class="tech-tag">docplex · CPLEX</span>
         </div>
+      </div>
     </div>
     """, unsafe_allow_html=True)
 
 
+def renderizar_stepper(activo: int = 1):
+    """
+    Renderiza el stepper de módulos M1 → M2 → M3.
+
+    Parámetros:
+        activo: módulo actualmente en curso (1, 2 o 3). Los anteriores se
+                marcan como completados (verde) y el activo en azul sólido.
+    """
+    pasos = [
+        ("M1", "Escenario", "OSM → SUMO"),
+        ("M2", "Conectividad", "V2V · V2I · multisalto"),
+        ("M3", "Optimización", "despliegue de RSU"),
+    ]
+    html = ['<div class="module-stepper">']
+    for i, (n, t, s) in enumerate(pasos, start=1):
+        cls = "done" if i < activo else ("active" if i == activo else "")
+        html.append(
+            f'<div class="ms-step {cls}"><span class="ms-n">{n}</span>'
+            f'<div><div class="ms-t">{t}</div><div class="ms-s">{s}</div></div></div>'
+        )
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
 def renderizar_map_label():
-    """Renderiza el label encima del mapa."""
+    """Label sobre el mapa interactivo."""
     st.markdown("""
     <div class="map-label">
         <div class="map-label-dot"></div>
-        <div class="map-label-text">Mapa Interactivo — Dibuja un rectángulo</div>
+        <div class="map-label-text">Mapa interactivo — dibuja un rectángulo</div>
     </div>
     """, unsafe_allow_html=True)
 
 
 def renderizar_instrucciones():
-    """Renderiza el panel de instrucciones."""
+    """Panel de instrucciones de uso."""
     st.markdown("""
     <div class="glass-card">
-        <div class="card-title"><span class="icon">📋</span> Cómo usar</div>
+        <div class="card-title"><span class="icon">▤</span> Cómo usar</div>
         <div class="step">
             <div class="step-num">1</div>
-            <div class="step-text">Usa el ícono <strong>▭</strong> en la barra del mapa para dibujar un rectángulo sobre la zona que quieras simular.</div>
+            <div class="step-text">Usa el ícono <strong>▭</strong> en la barra del mapa para dibujar un rectángulo sobre la zona a simular.</div>
         </div>
         <div class="step">
             <div class="step-num">2</div>
-            <div class="step-text">Las coordenadas del Bounding Box aparecerán abajo automáticamente.</div>
+            <div class="step-text">Las coordenadas del <em>bounding box</em> aparecerán abajo automáticamente.</div>
         </div>
         <div class="step">
             <div class="step-num">3</div>
-            <div class="step-text">Presiona <strong>"Generar Escenario"</strong> para descargar OSM y ejecutar SUMO.</div>
+            <div class="step-text">Presiona <strong>"Generar escenario"</strong> para descargar OSM y ejecutar SUMO.</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
 
 def renderizar_coordenadas(min_lat, min_lon, max_lat, max_lon):
-    """Renderiza las coordenadas seleccionadas con diseño premium."""
+    """Coordenadas del área seleccionada."""
     st.markdown(f"""
     <div class="glass-card">
-        <div class="card-title"><span class="icon">📍</span> Área Seleccionada</div>
+        <div class="card-title"><span class="icon">◧</span> Área seleccionada</div>
         <div class="coord-grid">
-            <div class="coord-item">
-                <div class="coord-label">Lat Mín</div>
-                <div class="coord-value">{min_lat:.6f}°</div>
-            </div>
-            <div class="coord-item">
-                <div class="coord-label">Lon Mín</div>
-                <div class="coord-value">{min_lon:.6f}°</div>
-            </div>
-            <div class="coord-item">
-                <div class="coord-label">Lat Máx</div>
-                <div class="coord-value">{max_lat:.6f}°</div>
-            </div>
-            <div class="coord-item">
-                <div class="coord-label">Lon Máx</div>
-                <div class="coord-value">{max_lon:.6f}°</div>
-            </div>
+            <div class="coord-item"><div class="coord-label">Lat mín</div><div class="coord-value">{min_lat:.6f}°</div></div>
+            <div class="coord-item"><div class="coord-label">Lon mín</div><div class="coord-value">{min_lon:.6f}°</div></div>
+            <div class="coord-item"><div class="coord-label">Lat máx</div><div class="coord-value">{max_lat:.6f}°</div></div>
+            <div class="coord-item"><div class="coord-label">Lon máx</div><div class="coord-value">{max_lon:.6f}°</div></div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
 
 def renderizar_estado_vacio():
-    """Muestra un estado vacío cuando no hay selección."""
+    """Estado vacío cuando no hay selección."""
     st.markdown("""
     <div class="glass-card">
-        <div class="card-title"><span class="icon">📍</span> Área Seleccionada</div>
+        <div class="card-title"><span class="icon">◧</span> Área seleccionada</div>
         <div class="empty-state">
-            <span class="empty-icon">🗺️</span>
+            <span class="empty-icon">▢</span>
             <div class="msg">Dibuja un rectángulo en el mapa<br>para ver las coordenadas aquí</div>
         </div>
     </div>
@@ -713,9 +451,9 @@ def renderizar_estado_vacio():
 
 
 def renderizar_paso_pipeline(nombre: str, exito: bool, detalle: str):
-    """Renderiza un paso del pipeline con estado visual."""
+    """Un paso del pipeline con estado visual."""
     estado = "success" if exito else "error"
-    icono = "✅" if exito else "❌"
+    icono = "✓" if exito else "✕"
     st.markdown(f"""
     <div class="pipeline-step {estado}">
         <div class="step-icon">{icono}</div>
@@ -728,10 +466,9 @@ def renderizar_paso_pipeline(nombre: str, exito: bool, detalle: str):
 
 
 def renderizar_divider(texto: str):
-    """Renderiza un separador de sección con etiqueta."""
+    """Separador de sección con etiqueta."""
     st.markdown(f"""
     <div class="section-divider">
-        <div class="line"></div>
         <div class="label">{texto}</div>
         <div class="line"></div>
     </div>
@@ -739,123 +476,57 @@ def renderizar_divider(texto: str):
 
 
 def renderizar_resumen(n_junctions: int, n_edificios: int):
-    """Renderiza el resumen final del pipeline."""
+    """Resumen final del pipeline del Módulo 1."""
     st.markdown(f"""
     <div class="summary-card">
-        <div class="summary-title">🎉 Pipeline Completado</div>
+        <div class="summary-title">✓ Escenario generado</div>
         <div class="summary-stats">
-            <span class="summary-stat">
-                <span class="stat-number">{n_junctions}</span>
-                <span class="stat-label">intersecciones</span>
-            </span>
-            <span class="summary-stat">
-                <span class="stat-number">{n_edificios}</span>
-                <span class="stat-label">edificios</span>
-            </span>
+            <span class="summary-stat"><span class="stat-number">{n_junctions}</span><span class="stat-label">intersecciones</span></span>
+            <span class="summary-stat"><span class="stat-number">{n_edificios}</span><span class="stat-label">edificios</span></span>
         </div>
         <div class="file-list">
-            <div class="file-item">
-                <span class="file-icon">📄</span>
-                <span class="file-name">junctions_limpias.json</span>
-                <span class="file-desc">Intersecciones viales</span>
-            </div>
-            <div class="file-item">
-                <span class="file-icon">📄</span>
-                <span class="file-name">edificios_limpios.json</span>
-                <span class="file-desc">Polígonos de edificios</span>
-            </div>
-            <div class="file-item">
-                <span class="file-icon">📄</span>
-                <span class="file-name">mapa.net.xml</span>
-                <span class="file-desc">Red vial SUMO</span>
-            </div>
-            <div class="file-item">
-                <span class="file-icon">📄</span>
-                <span class="file-name">mapa.rou.xml</span>
-                <span class="file-desc">Rutas vehiculares</span>
-            </div>
+            <div class="file-item"><span class="file-icon">▪</span><span class="file-name">junctions_limpias.json</span><span class="file-desc">Intersecciones viales</span></div>
+            <div class="file-item"><span class="file-icon">▪</span><span class="file-name">edificios_limpios.json</span><span class="file-desc">Polígonos de edificios</span></div>
+            <div class="file-item"><span class="file-icon">▪</span><span class="file-name">mapa.net.xml</span><span class="file-desc">Red vial SUMO</span></div>
+            <div class="file-item"><span class="file-icon">▪</span><span class="file-name">mapa.rou.xml</span><span class="file-desc">Rutas vehiculares</span></div>
         </div>
-        <p style="color: #94a3b8; font-size: 0.78rem; margin-top: 12px; margin-bottom: 0;">
-            📁 Todos los archivos están en la carpeta <code style="color: #06b6d4;">output/</code>
+        <p class="desc" style="margin-top: 12px; margin-bottom: 0;">
+            Todos los archivos quedan en la carpeta <code>output/</code>
         </p>
     </div>
     """, unsafe_allow_html=True)
 
 
 def renderizar_simulacion_stats(estadisticas: dict):
-    """
-    Renderiza las estadísticas de la simulación V2I con tarjetas visuales.
-
-    Parámetros:
-        estadisticas: Diccionario con los datos de resumen generados por
-                     generar_tuplas_visibilidad().
-    """
+    """Tiles de estadísticas de la simulación V2I."""
     total_tuplas = estadisticas.get("total_tuplas", 0)
     total_ts = estadisticas.get("total_timesteps", 0)
     radio_obu = estadisticas.get("radio_obu", 0)
-    resumen = estadisticas.get("resumen_por_rsu", {})
-
-    num_rsus = len(resumen)
+    num_rsus = len(estadisticas.get("resumen_por_rsu", {}))
 
     st.markdown(f"""
     <div class="sim-stats-grid">
-        <div class="sim-stat-card">
-            <div class="sim-stat-value">{total_tuplas:,}</div>
-            <div class="sim-stat-label">Tuplas V2I LoS</div>
-        </div>
-        <div class="sim-stat-card purple">
-            <div class="sim-stat-value">{total_ts}</div>
-            <div class="sim-stat-label">Timesteps</div>
-        </div>
-        <div class="sim-stat-card emerald">
-            <div class="sim-stat-value">{num_rsus}</div>
-            <div class="sim-stat-label">RSU activos</div>
-        </div>
-        <div class="sim-stat-card amber">
-            <div class="sim-stat-value">{radio_obu}m</div>
-            <div class="sim-stat-label">Radio OBU</div>
-        </div>
+        <div class="sim-stat-card"><div class="sim-stat-value">{total_tuplas:,}</div><div class="sim-stat-label">Tuplas V2I (LoS)</div></div>
+        <div class="sim-stat-card purple"><div class="sim-stat-value">{total_ts}</div><div class="sim-stat-label">Snapshots</div></div>
+        <div class="sim-stat-card emerald"><div class="sim-stat-value">{num_rsus}</div><div class="sim-stat-label">RSU activos</div></div>
+        <div class="sim-stat-card amber"><div class="sim-stat-value">{radio_obu}m</div><div class="sim-stat-label">Radio OBU</div></div>
     </div>
     """, unsafe_allow_html=True)
 
 
 def renderizar_v2v_stats(estadisticas_v2v: dict):
-    """
-    Renderiza las estadísticas de conectividad V2V con tarjetas visuales.
-
-    Parámetros:
-        estadisticas_v2v: Diccionario con los datos de resumen generados por
-                         generar_tuplas_v2v().
-    """
+    """Tiles de estadísticas de conectividad V2V."""
     total_tuplas = estadisticas_v2v.get("total_tuplas_v2v", 0)
-    total_ts = estadisticas_v2v.get("total_timesteps", 0)
-    total_pares = estadisticas_v2v.get("total_pares_evaluados", 0)
     pares_rango = estadisticas_v2v.get("total_pares_en_rango", 0)
     bidireccional = estadisticas_v2v.get("bidireccional", True)
-    radio_obu = estadisticas_v2v.get("radio_obu", 0)
-    resumen = estadisticas_v2v.get("resumen_por_vehiculo", {})
-    num_vehiculos = len(resumen)
-
+    num_vehiculos = len(estadisticas_v2v.get("resumen_por_vehiculo", {}))
     bidi_label = "Sí" if bidireccional else "No"
 
     st.markdown(f"""
     <div class="sim-stats-grid">
-        <div class="sim-stat-card">
-            <div class="sim-stat-value">{total_tuplas:,}</div>
-            <div class="sim-stat-label">Tuplas V2V</div>
-        </div>
-        <div class="sim-stat-card purple">
-            <div class="sim-stat-value">{num_vehiculos}</div>
-            <div class="sim-stat-label">Vehículos conectados</div>
-        </div>
-        <div class="sim-stat-card emerald">
-            <div class="sim-stat-value">{pares_rango:,}</div>
-            <div class="sim-stat-label">Pares en rango</div>
-        </div>
-        <div class="sim-stat-card amber">
-            <div class="sim-stat-value">{bidi_label}</div>
-            <div class="sim-stat-label">Bidireccional</div>
-        </div>
+        <div class="sim-stat-card"><div class="sim-stat-value">{total_tuplas:,}</div><div class="sim-stat-label">Tuplas V2V</div></div>
+        <div class="sim-stat-card purple"><div class="sim-stat-value">{num_vehiculos}</div><div class="sim-stat-label">Vehículos conectados</div></div>
+        <div class="sim-stat-card emerald"><div class="sim-stat-value">{pares_rango:,}</div><div class="sim-stat-label">Pares en rango</div></div>
+        <div class="sim-stat-card amber"><div class="sim-stat-value">{bidi_label}</div><div class="sim-stat-label">Bidireccional</div></div>
     </div>
     """, unsafe_allow_html=True)
-

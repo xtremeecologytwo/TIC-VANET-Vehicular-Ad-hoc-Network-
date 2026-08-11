@@ -39,7 +39,8 @@ El proyecto sigue una arquitectura **MVC simplificada** con separación clara en
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                        app.py (Orquestador)                      │
-│     Coordina Módulo 1 (Escenario), Módulo 2 (V2I) y V2V         │
+│  Coordina Módulo 1 (Escenario), Módulo 2 (V2I/V2V) y Módulo 3    │
+│              (Optimización del despliegue de RSU)                 │
 ├──────────────────────────┬───────────────────────────────────────┤
 │     📊 FRONTEND          │              ⚙️ BACKEND               │
 │                          │                                       │
@@ -242,7 +243,26 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-La aplicación se abrirá automáticamente en `http://localhost:8501`.
+La aplicación se abrirá automáticamente en `http://localhost:8501`. El tema visual
+("claro científico/ingeniería") y el modo headless quedan fijados en
+[`.streamlit/config.toml`](.streamlit/config.toml).
+
+### 5. Desplegar (Docker)
+
+El repo incluye un [`Dockerfile`](Dockerfile) que empaqueta Python 3.10 + SUMO +
+las dependencias:
+
+```bash
+docker build -t smartcitynet .
+docker run -p 8501:8501 smartcitynet
+```
+
+Dónde desplegarla, opciones gratuitas/de pago, y cómo incluir el motor **CPLEX
+completo** (licencia académica de IBM): ver **[`DESPLIEGUE.md`](DESPLIEGUE.md)**.
+
+> ⚠️ La app necesita un **servidor real** (SUMO + CPLEX corren en el backend), así
+> que **Streamlit Community Cloud no sirve**. Alternativas: Hugging Face Spaces
+> (Docker, gratis), Render/Railway/Fly.io, un VPS, o el servidor de la EPN.
 
 ---
 
@@ -251,9 +271,14 @@ La aplicación se abrirá automáticamente en `http://localhost:8501`.
 ```
 TIC-VANET-Vehicular-Ad-hoc-Network-/
 │
-├── app.py                      # 🎯 Orquestador principal Módulo 1, 2 & V2V (~850 líneas)
+├── app.py                      # 🎯 Orquestador principal Módulos 1, 2 & 3 (~1250 líneas)
 ├── requirements.txt            # 📦 Dependencias Python
 ├── README.md                   # 📖 Este archivo
+├── Dockerfile                  # 🐳 Imagen de despliegue (Python 3.10 + SUMO + deps)
+├── DESPLIEGUE.md               # 🚀 Guía de despliegue (dónde y cómo)
+├── .dockerignore               # 🐳 Exclusiones de la imagen
+├── .streamlit/
+│   └── config.toml             # 🎨 Tema claro científico/ingeniería + headless
 │
 ├── mini_proyecto_vanet.py      # 🆕📚 Demo de TODO el flujo: mapa → LoS → A/B → multisalto
 ├── ejemplo_multisalto.py       # 🆕📚 Demo solo del multisalto (A y B dados a mano)
@@ -261,8 +286,8 @@ TIC-VANET-Vehicular-Ad-hoc-Network-/
 │
 ├── frontend/                   # 🖥️ Capa de presentación
 │   ├── __init__.py             #    Inicializador del paquete
-│   ├── mapa.py                 #    Mapas: interactivo + RSU + conectividad V2I/V2V (~460 líneas)
-│   └── estilos.py              #    CSS premium + componentes UI (~860 líneas)
+│   ├── mapa.py                 #    Mapas: interactivo + RSU + conectividad + optimización (~520 líneas)
+│   └── estilos.py              #    CSS de la consola clara + componentes UI + stepper
 │
 ├── backend/                    # ⚙️ Capa de lógica de negocio
 │   ├── __init__.py             #    Inicializador del paquete
@@ -538,7 +563,7 @@ Cuando SUMO procesa un archivo OSM con `netconvert`, genera un gran número de j
 
 Para la colocación de RSU en VANETs, solo interesa un subconjunto específico: **las intersecciones reales donde múltiples calles vehiculares se cruzan**, ya que es en esos puntos donde los vehículos se detienen, cambian de dirección y necesitan comunicación V2I (Vehicle-to-Infrastructure).
 
-**Ejemplo real:** Para una zona del Centro Histórico de Quito, SUMO generó **620 junctions** tras el parseo inicial. Después del filtrado RSU, se redujeron a **160 candidatos** (reducción del 74%) conservando solo las intersecciones significativas.
+**Ejemplo real:** Para la zona del Centro Histórico de Quito incluida en `output/`, SUMO generó **1211 junctions** tras el parseo inicial. Con la configuración de referencia (grado mínimo **4**, radio **20 m**), el filtrado RSU las redujo a **278 candidatos** (reducción del **77%**) conservando solo las intersecciones significativas.
 
 ---
 
@@ -583,7 +608,7 @@ El filtrado se implementa en la función `filtrar_junctions_rsu()` y consta de d
 
 #### Etapa 1: Filtrado por grado de conectividad
 
-**¿Qué es el grado?** El grado de una junction es el número de aristas (edges) no-internas que se conectan a ella. En SUMO, cada calle bidireccional genera **2 edges** (una por sentido), por lo que:
+**¿Qué es el grado?** El grado de una junction es el número de **vecinos únicos** que tiene en el grafo **no dirigido** de la red. Las aristas dirigidas y paralelas de SUMO (una calle bidireccional genera 2 edges, uno por sentido) se reducen a un par no ordenado `{from, to}`, de modo que dos junctions vecinas cuentan **una sola vez**. Así el grado equivale al número de calles distintas que confluyen en la intersección:
 
 | Grado | Significado real | ¿Se conserva? (default min_grado=4) |
 |-------|-----------------|--------------------------------------|
@@ -598,17 +623,19 @@ El filtrado se implementa en la función `filtrar_junctions_rsu()` y consta de d
 **Implementación** (`calcular_grado_junctions()`):
 
 ```python
-grados = {}
+vecinos = {}
 for edge in root.findall("edge"):
     if edge.get("function") == "internal":
         continue  # Ignorar edges internas de SUMO
-    from_id = edge.get("from")
-    to_id = edge.get("to")
-    grados[from_id] = grados.get(from_id, 0) + 1
-    grados[to_id] = grados.get(to_id, 0) + 1
+    a, b = edge.get("from"), edge.get("to")
+    if not a or not b or a == b:
+        continue  # descartar aristas incompletas o lazos
+    vecinos.setdefault(a, set()).add(b)   # pares no ordenados
+    vecinos.setdefault(b, set()).add(a)
+grados = {j: len(vs) for j, vs in vecinos.items()}  # nº de vecinos únicos
 ```
 
-Se recorre cada `<edge>` del archivo `mapa.net.xml`, se ignoran las internas (`function="internal"`), y para cada edge vehicular se incrementa el contador del nodo origen (`from`) y del nodo destino (`to`).
+Se recorre cada `<edge>` no interna, se descartan lazos, y cada extremo se agrega al conjunto de vecinos del otro; el grado final es el **número de vecinos únicos**. De este modo una calle bidireccional (2 edges) cuenta como **un solo vecino**, alineando el grado con la tabla de arriba (grado 4 = cruce de 2 calles = 4 vecinos). El `clustering` greedy ordena por grado descendente y, ante empate, por id de junction ascendente, para que corridas repetidas den el **mismo** conjunto de RSU (resultado determinista).
 
 #### Etapa 2: Clustering espacial greedy
 
@@ -905,15 +932,17 @@ def tiene_linea_de_vista(vx, vy, rx, ry, edificios_cercanos):
 
 #### Optimizaciones de rendimiento
 
-Sin optimizar, el cálculo requeriría `~100 vehículos × 100 timesteps × 160 RSU × 500 edificios = ~800M` tests de intersección. Las optimizaciones implementadas reducen esto drásticamente:
+Sin optimizar, el cálculo requeriría del orden de `130 vehículos × 31 instantes × 280 RSU × 3248 edificios ≈ 3.7×10⁹` tests de intersección. Las optimizaciones implementadas reducen esto drásticamente:
 
 | Optimización | Descripción | Reducción estimada |
 |----------|-----------|----------|
-| **Pre-filtro por distancia** | Solo evaluar pares V↔RSU dentro del radio efectivo | ~90% de pares eliminados |
-| **Caché de edificios por RSU** | Para cada RSU, pre-calcular qué edificios están en su radio (se hace 1 sola vez) | ~90% de edificios eliminados |
-| **Pre-filtro por bounding box** | Solo evaluar edificios cuyo bbox se solape con el del segmento V→RSU | ~50% adicional |
+| **Índice espacial (grid) de RSU** | Cada vehículo solo compara contra las RSU de su celda 3×3 (celda = radio), no contra las N | de O(V·R) a ≈O(V·k) |
+| **Índice espacial (grid) de vehículos** | En V2V cada vehículo solo se empareja con los de su celda 3×3 | de O(n²) a ≈O(n·k) por instante |
+| **Grid de edificios por segmento** | Cada segmento V→V/V→RSU solo prueba los edificios que toca su trayecto, no los miles del mapa | ~99% de edificios eliminados por par |
+| **Bounding boxes precalculados 1 sola vez** | El bbox de cada edificio se calcula una vez y se reutiliza (antes se recomputaba en cada test) | evita millones de recomputaciones |
+| **Pre-filtro por distancia²** | Descartar pares fuera de radio sin calcular la raíz cuadrada | el `sqrt` solo se hace en los pares reales |
 
-Con estas optimizaciones, el cálculo toma **< 5 segundos** para escenarios típicos (100 vehículos, 150 timesteps, ~160 RSU).
+Con estas optimizaciones el motor de conectividad **escala hasta 1000 vehículos**. Medido en el equipo de referencia (Ryzen 7 7735HS), el **peor caso extremo** de 10 instantes × **1000 vehículos activos** cada uno (≈5000 edificios, ≈440 RSU) toma **≈4.5 s** en total (V2I ≈3.6 s + V2V ≈0.9 s). En tráfico real solo hay una fracción de vehículos activos por instante, así que es aún más rápido. Todas las optimizaciones son **exactas**: producen exactamente el mismo conjunto de tuplas que la versión sin optimizar (verificado por comparación de conjuntos).
 
 ---
 
@@ -1106,7 +1135,7 @@ La pestaña **"🔢 Matrices A y B"** permite seleccionar un instante de tiempo 
 
 | Parámetro | Control UI | Default | Rango | Descripción |
 |-----------|-----------|---------|-------|---------| 
-| `num_vehiculos` | Slider: 🚗 Número de vehículos | **100** | 5 – 200 | Vehículos totales a generar con rutas aleatorias |
+| `num_vehiculos` | Slider: 🚗 Número de vehículos | **100** | 5 – 1000 | Vehículos totales a generar con rutas aleatorias (el motor de conectividad usa índice espacial, así que escala a 1000) |
 | `tiempo_simulacion` | Slider: 🕐 Duración de simulación | **120 min** | 1 – 180 min | Tiempo total de la simulación SUMO en minutos (hasta 3 horas; 120 = 2 h) |
 | `periodo_salida` | **Automático** (no es slider) | — | — | Se calcula como `duración / Nº autos`: reparte los autos a lo largo de la simulación |
 | `radio_obu_sim` | Slider: 📱 Radio OBU | **300m** | 50 – 500m | Radio de cobertura del OBU del vehículo (aplica a V2I y V2V) |
@@ -1216,10 +1245,14 @@ Se sugiere crear una tabla comparativa para la tesis:
 
 | Zona geográfica | Área (km²) | Junctions orig. | min_grado | radio (m) | RSU candidatos | Reducción (%) |
 |-----------------|------------|-----------------|-----------|-----------|----------------|---------------|
-| Centro Histórico | ~0.5 | 620 | 4 | 20 | 160 | 74% |
-| Centro Histórico | ~0.5 | 620 | 6 | 30 | 63 | 90% |
+| Centro Histórico (A) | ~0.5 | 1211 | 3 | 15 | 393 | 67.5% |
+| Centro Histórico (B) | ~0.5 | 1211 | 3 | 20 | 366 | 69.8% |
+| Centro Histórico (C, ref.) | ~0.5 | 1211 | 4 | 20 | 278 | 77.0% |
+| Centro Histórico (D) | ~0.5 | 1211 | 5 | 25 | 14 | 98.8% |
 | Zona Norte | ~0.8 | — | 4 | 20 | — | — |
 | Zona Industrial | ~1.0 | — | 4 | 20 | — | — |
+
+> Nota: el **grado** es el número de **vecinos únicos** (grafo no dirigido). Con grado 5 (config D) muy pocas junctions del centro histórico califican (la mayoría son cruces de 4 vecinos), por eso D es tan selectivo. Valores reproducibles con `filtrar_junctions_rsu()` sobre `output/`.
 
 ### Cómo cambiar la zona geográfica
 
@@ -1331,7 +1364,7 @@ En la pestaña **"🔗 Multisalto"** (dentro de los resultados del Módulo 2) pu
 
 Esta sección documenta [`backend/exportar_dat.py`](backend/exportar_dat.py), el **puente** entre la parte VANET del proyecto (que produce las matrices de conectividad) y la parte de **optimización de despliegue de RSU** que vive en [`optimizacion/`](optimizacion/). La optimización se resuelve con **IBM CPLEX** desde Python vía **`docplex`** (ver [Resolución con docplex/CPLEX](#resolución-con-docplexcplex-python-ya-no-oplrun) más abajo); el archivo `.dat` que genera este módulo sigue siendo útil para inspección y compatibilidad con OPL, pero ya **no** es necesario para resolver.
 
-> ⚠️ **Alcance.** `exportar_dat.py` **solo genera el archivo `.dat`** (y arma en memoria el dict de datos). La resolución la hace [`optimizacion/optimizar_rsu.py`](optimizacion/optimizar_rsu.py) con docplex. Ninguno de los dos está conectado todavía con la interfaz (`app.py`); integrar el resultado (RSU elegidos) en la UI/mapa es el paso pendiente.
+> ✅ **Alcance.** `exportar_dat.py` genera el archivo `.dat` y arma en memoria el dict de datos; la resolución la hace [`optimizacion/optimizar_rsu.py`](optimizacion/optimizar_rsu.py) con docplex. **Ambos están integrados en la interfaz (`app.py`) como el Módulo 3:** tras la simulación V2I+V2V, el botón *"Optimizar Despliegue de RSU"* construye el CVR en memoria (`exportar_dat_desde_memoria`), resuelve con `optimizar()` y dibuja las RSU seleccionadas sobre el mismo plano generado por el frontend. También se puede correr por CLI (ver más abajo).
 
 ### ¿Qué es el `.dat` y por qué se necesita?
 
@@ -1420,7 +1453,7 @@ python -m backend.exportar_dat --todos-los-rsu       # incluir todos los candida
 
 ### Ejemplo de salida (con los datos reales de `output/`)
 
-Con la simulación de ejemplo (31 instantes, 132 vehículos, 333 RSU candidatos, `H=3`, `MaxR=10`) el módulo genera:
+Con la simulación de ejemplo (31 instantes, 132 vehículos, 278 RSU candidatos [config. de referencia, grado 4 / radio 20 m], `H=3`, `MaxR=10`) el módulo genera:
 
 ```
 ============================================================
@@ -1429,9 +1462,9 @@ Con la simulación de ejemplo (31 instantes, 132 vehículos, 333 RSU candidatos,
   Archivo........: optimizacion/rsu_backend.dat
   Escenarios.....: 31
   Vehículos......: 132
-  RSU candidatos.: 256 (de 333)      # 77 RSU nunca alcanzados → excluidos
+  RSU candidatos.: 227 (de 278)      # 51 RSU nunca alcanzados → excluidos
   Saltos H.......: 3  (hmax = 4)
-  Tuplas CVR.....: 1710
+  Tuplas CVR.....: 1628
   MaxR...........: 10
 ============================================================
 ```
@@ -1506,8 +1539,9 @@ python "C:\Program Files\IBM\ILOG\CPLEX_Studio2211\python\setup.py" install
 >
 > ✔️ **Verificado en este proyecto (Python 3.10.11):** tras recrear el `.venv` e instalar
 > el motor completo por el método (B), el problema real resuelve a óptimo
-> (`31 escenarios · 132 vehículos · 256 RSU · 1710 CVR`, objetivo 2239.0, *integer optimal
-> solution*, 40 RSU desplegadas), y el micro-ejemplo sigue dando `{R1, R3}` = 11.0.
+> (`31 escenarios · 132 vehículos · 278 RSU candidatos · 1628 CVR`, objetivo 2237.0,
+> *integer optimal solution*, 38 RSU desplegadas), y el micro-ejemplo sigue dando
+> `{R1, R3}` = 11.0.
 
 **Cómo ejecutarlo y demostrar que funciona:**
 
@@ -1529,7 +1563,7 @@ Salida del auto-test (`--micro`):
   Validación: esperado [1, 3], obtenido [1, 3] -> ✅ OK
 ```
 
-Con datos reales, el solver devuelve los **ids de RSU del backend** a desplegar (usando el mapa inverso de la cabecera del `.dat`). El siguiente paso pendiente es integrar ese resultado (RSU elegidos) en la UI/mapa.
+Con datos reales, el solver devuelve los **ids de RSU del backend** a desplegar (usando el mapa inverso de la cabecera del `.dat`). Ese resultado ya está **integrado en la interfaz** (Módulo 3 de `app.py`): las RSU elegidas se resaltan en verde sobre el plano, con las candidatas no desplegadas en gris. En el escenario de referencia (Centro Histórico de Quito, 31 escenarios, 227 RSU candidatas, 1628 tuplas CVR) el óptimo entero es **objetivo = 2237.0 con 38 RSU desplegadas**.
 
 ---
 
@@ -1653,56 +1687,63 @@ Las conexiones V2V se dibujan sin duplicar líneas (para pares bidireccionales, 
 
 ### 📁 `frontend/estilos.py`
 
-Este módulo contiene todo el diseño visual de la aplicación. Inyecta CSS personalizado en Streamlit mediante `st.markdown(unsafe_allow_html=True)`.
+Contiene el diseño visual de la aplicación: la **consola clara científica/ingeniería**.
+Inyecta CSS en Streamlit con `st.markdown(unsafe_allow_html=True)` y complementa al
+tema base fijado en [`.streamlit/config.toml`](.streamlit/config.toml).
+
+**Dirección de diseño:** instrumento científico, no web decorativa. Fondo claro frío,
+**un único acento azul acero** (`#2557a7`), **verde reservado como color semántico**
+para "óptimo/desplegado" (`#0f9d6b`), **datos en monoespaciada con cifras tabulares**,
+hairlines de plano de ingeniería y un motivo sutil de **graticula cartográfica** en el
+encabezado. Sin gradientes animados ni neón (se retiró el estilo oscuro anterior).
 
 **Librerías utilizadas:** `streamlit`
 
 #### `COLORES` (diccionario)
 
-Paleta de colores centralizada del proyecto:
+Paleta centralizada (claro). Se conservan alias con los nombres antiguos
+(`accent_cyan`, `text_primary`, …) apuntando a la nueva paleta para compatibilidad.
 
 | Variable | Valor | Uso |
 |----------|-------|-----|
-| `bg_primary` | `#0a0e1a` | Fondo principal (oscuro profundo) |
-| `bg_secondary` | `#111827` | Fondo de tarjetas |
-| `accent_cyan` | `#06b6d4` | Acento principal, coordenadas, botones |
-| `accent_blue` | `#3b82f6` | Acento secundario, gradientes |
-| `accent_purple` | `#8b5cf6` | Acento terciario, hover effects |
-| `accent_emerald` | `#10b981` | Estados exitosos (✅) |
-| `accent_amber` | `#f59e0b` | Advertencias, iconos de archivos |
-| `accent_red` | `#ef4444` | Estados de error (❌) |
-| `text_primary` | `#f1f5f9` | Texto principal |
-| `text_secondary` | `#94a3b8` | Texto secundario, subtítulos |
+| `ground` | `#f6f7f9` | Fondo de la app (frío, claro) |
+| `surface` | `#ffffff` | Fondo de tarjetas/paneles |
+| `ink` | `#0f1b2d` | Texto principal (navy) |
+| `muted` | `#5b6b7f` | Texto secundario |
+| `line` | `#e2e6ec` | Bordes hairline |
+| `accent` | `#2557a7` | Acento único (azul acero): acciones, datos, links |
+| `ok` | `#0f9d6b` | Semántico: óptimo / RSU desplegada / éxito |
+| `warn` | `#b9770b` | Semántico: advertencia |
+| `crit` | `#c0392b` | Semántico: error |
 
 #### `inyectar_css()`
 
-Inyecta más de 500 líneas de CSS personalizado con:
-- **Google Fonts:** `Inter` (pesos 300-800) para la interfaz, `JetBrains Mono` (pesos 400-500) para datos numéricos
-- **Glassmorphism:** Tarjetas con `backdrop-filter: blur(20px)` y gradientes semitransparentes
-- **Animaciones CSS:** 5 keyframes animados (`gradient-slide`, `text-gradient`, `btn-gradient`, `pulse-dot`, `pulse-border`)
-- **Responsive:** Grid CSS para coordenadas, Flexbox para pasos y estadísticas
-- **Oculta elementos Streamlit:** Esconde el menú hamburguesa, footer y header nativos
+Inyecta el CSS de la consola: tipografía de sistema + monoespaciada para datos,
+tarjetas y paneles con hairlines, botón primario azul sólido (sin gradiente),
+**estilado de los widgets nativos** (`st.metric`, tabs, expanders, sliders,
+dataframes) para que armonicen, y oculta el chrome de Streamlit.
 
 #### Funciones de renderizado
 
 | Función | Propósito |
 |---------|-----------|
-| `renderizar_header()` | Encabezado hero con badge, título animado, descripción y tech tags |
-| `renderizar_map_label()` | Label superior del mapa con punto verde pulsante de "activo" |
-| `renderizar_instrucciones()` | Tarjeta glassmorphism con 3 pasos numerados |
-| `renderizar_coordenadas(min_lat, min_lon, max_lat, max_lon)` | Grid 2×2 con las 4 coordenadas en fuente monospace cyan |
-| `renderizar_estado_vacio()` | Estado vacío con icono y mensaje centrado |
-| `renderizar_paso_pipeline(nombre, exito, detalle)` | Fila de log del pipeline con icono ✅/❌, borde verde/rojo y detalle en monospace |
-| `renderizar_divider(texto)` | Línea separadora horizontal con etiqueta centrada en mayúsculas |
-| `renderizar_resumen(n_junctions, n_edificios)` | Tarjeta final con estadísticas numéricas y lista de archivos generados |
-| `renderizar_simulacion_stats(estadisticas)` | Tarjetas con métricas V2I: tuplas LoS, timesteps, RSU activos, radio OBU |
-| `renderizar_v2v_stats(estadisticas_v2v)` | Tarjetas con métricas V2V: tuplas V2V, vehículos conectados, pares en rango, bidireccionalidad |
+| `renderizar_header()` | Encabezado con eyebrow, título, descripción, tech tags y graticula |
+| `renderizar_stepper(activo)` | **Nuevo.** Stepper de módulos M1→M2→M3 (hecho=verde, activo=azul) |
+| `renderizar_map_label()` | Label superior del mapa con punto de estado |
+| `renderizar_instrucciones()` | Tarjeta con 3 pasos numerados |
+| `renderizar_coordenadas(min_lat, min_lon, max_lat, max_lon)` | Grid 2×2 con las 4 coordenadas en monoespaciada |
+| `renderizar_estado_vacio()` | Estado vacío con icono y mensaje |
+| `renderizar_paso_pipeline(nombre, exito, detalle)` | Fila de log del pipeline con estado ✓/✕ |
+| `renderizar_divider(texto)` | Separador de sección con etiqueta mono en chip |
+| `renderizar_resumen(n_junctions, n_edificios)` | Tarjeta de resumen del M1 con archivos generados |
+| `renderizar_simulacion_stats(estadisticas)` | Tiles con métricas V2I |
+| `renderizar_v2v_stats(estadisticas_v2v)` | Tiles con métricas V2V |
 
 ---
 
 ## 🎯 Orquestador Principal (`app.py`)
 
-El archivo `app.py` (~850 líneas) es el punto de entrada de la aplicación. No contiene lógica de negocio propia — su función es **orquestar** los módulos del frontend y backend, incluyendo los controles interactivos de filtrado RSU y la simulación V2I + V2V.
+El archivo `app.py` (~1100 líneas) es el punto de entrada de la aplicación. No contiene lógica de negocio propia — su función es **orquestar** los módulos del frontend y backend, incluyendo los controles interactivos de filtrado RSU y la simulación V2I + V2V.
 
 ### Gestión de Estado con `st.session_state`
 
@@ -1816,10 +1857,11 @@ La conversión entre ambos sistemas se hace mediante `obtener_proyeccion()` + `c
 2. ~~**Conectividad V2V:** Matriz A vehículo-vehículo con tuplas `<t, Vi, Vj>`~~ ✅ **Implementado**
 3. ~~**Conectividad multisalto:** Uso de las matrices A y B para calcular conectividad a múltiples saltos mediante producto binario de matrices (R_h, S_h, D_H, vector d)~~ ✅ **Implementado** (módulo [`backend/multisalto.py`](backend/multisalto.py))
 4. ~~**Exportación a la optimización:** Generar el `.dat` de OPL/CPLEX desde los datos del backend (conjuntos, parámetros y `CVR` desde las `S_h`)~~ ✅ **Implementado** (módulo [`backend/exportar_dat.py`](backend/exportar_dat.py)).
-5. ~~**Resolver la optimización:** Ejecutar el solver de despliegue de RSU~~ ✅ **Implementado** con **docplex/CPLEX en Python** ([`optimizacion/optimizar_rsu.py`](optimizacion/optimizar_rsu.py), ya no `oplrun`). Validado contra el micro-ejemplo (elige `{R1, R3}`, objetivo 11.0, idéntico al OPL) y resuelve datos reales del backend. ⏳ **Pendiente:** integrar el resultado (RSU elegidos) en la UI/mapa.
-6. **Módulo 3:** Integración con NS-3 para simulación de protocolos VANET
-7. **API REST:** Migrar el backend a FastAPI para desacoplar completamente frontend y backend
-8. **Docker:** Containerizar la aplicación con SUMO incluido para facilitar despliegues
+5. ~~**Resolver la optimización:** Ejecutar el solver de despliegue de RSU~~ ✅ **Implementado** con **docplex/CPLEX en Python** ([`optimizacion/optimizar_rsu.py`](optimizacion/optimizar_rsu.py), ya no `oplrun`). Validado contra el micro-ejemplo (elige `{R1, R3}`, objetivo 11.0, idéntico al OPL) y resuelve datos reales del backend.
+6. ~~**Integrar la optimización en la UI:** botón que construye el CVR, resuelve con docplex/CPLEX y dibuja las RSU desplegadas sobre el plano~~ ✅ **Implementado** (Módulo 3 de [`app.py`](app.py) + [`crear_mapa_optimizacion`](frontend/mapa.py)). Cierra el flujo completo *escenario → simulación → conectividad → despliegue óptimo* dentro del frontend.
+7. **NS-3:** Integración con NS-3 para simulación de protocolos VANET
+8. **API REST:** Migrar el backend a FastAPI para desacoplar completamente frontend y backend
+9. **Docker:** Containerizar la aplicación con SUMO incluido para facilitar despliegues
 
 ---
 

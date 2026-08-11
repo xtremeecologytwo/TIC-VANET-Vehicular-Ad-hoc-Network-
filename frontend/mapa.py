@@ -9,6 +9,50 @@ import folium
 from folium.plugins import Draw, MiniMap
 
 
+def _ajustar_vista(m: folium.Map, proy: dict) -> folium.Map:
+    """
+    Corrige el desalineamiento de overlays (edificios/RSU respecto a las calles)
+    que aparece en el PRIMER render de un mapa dentro de `st_folium`.
+
+    Causa: en el primer pintado, el contenedor del componente aún no tiene su
+    tamaño final, por lo que Leaflet calcula el origen de píxeles con un tamaño
+    equivocado y coloca los polígonos y marcadores desplazados. Al interactuar
+    (o re-renderizar) Leaflet recalcula y todo se alinea.
+
+    Solución (canónica en Leaflet):
+      1. `fit_bounds` al área real (encuadra el contenido y fuerza un setView).
+      2. `invalidateSize(true)` diferido: una vez que el contenedor ya tiene su
+         tamaño definitivo, Leaflet recomputa el origen y reposiciona TODOS los
+         overlays correctamente desde el primer render.
+
+    Parámetros:
+        m: mapa de Folium ya construido.
+        proy: proyección con "orig" = [lon_min, lat_min, lon_max, lat_max].
+
+    Retorna:
+        El mismo mapa `m` con el ajuste de vista aplicado.
+    """
+    orig = proy.get("orig") if isinstance(proy, dict) else None
+    if orig and len(orig) == 4:
+        # Encuadrar al bounding box geográfico real del escenario.
+        m.fit_bounds([[orig[1], orig[0]], [orig[3], orig[2]]])
+
+    # invalidateSize diferido: se ejecuta tras el layout del contenedor y en
+    # cada resize, garantizando que los overlays queden alineados a las calles
+    # desde la primera vez (no solo tras interactuar).
+    nombre = m.get_name()
+    js = (
+        "setTimeout(function() {"
+        f"  try {{ {nombre}.invalidateSize(true); }} catch (e) {{}}"
+        "}, 300);"
+        f"window.addEventListener('resize', function() {{"
+        f"  try {{ {nombre}.invalidateSize(true); }} catch (e) {{}}"
+        "});"
+    )
+    m.get_root().script.add_child(folium.Element(js))
+    return m
+
+
 def crear_mapa(centro_lat: float = -0.2186, centro_lon: float = -78.5097, zoom: int = 14) -> folium.Map:
     """
     Crea un mapa de Folium con la herramienta de dibujo restringida a rectángulos.
@@ -263,8 +307,8 @@ def crear_mapa_resultados(junctions: dict, edificios: dict, proy: dict,
     
     # Control de capas para poder togglear intersecciones, edificios y cobertura
     folium.LayerControl(position="topright", collapsed=False).add_to(m)
-    
-    return m
+
+    return _ajustar_vista(m, proy)
 
 
 def crear_mapa_conectividad(rsus: dict, edificios: dict, proy: dict,
@@ -452,4 +496,122 @@ def crear_mapa_conectividad(rsus: dict, edificios: dict, proy: dict,
     grupo_rsus.add_to(m)
 
     folium.LayerControl(position="topright", collapsed=False).add_to(m)
-    return m
+    return _ajustar_vista(m, proy)
+
+
+def crear_mapa_optimizacion(rsus: dict, ids_desplegados: list, edificios: dict,
+                            proy: dict, radio_cobertura_m: float = 0) -> folium.Map:
+    """
+    Crea un mapa de Folium que visualiza el RESULTADO de la optimización de
+    despliegue de RSU sobre el MISMO plano generado por el frontend.
+
+    Dibuja todas las RSU candidatas y resalta cuáles seleccionó el solver
+    (docplex/CPLEX) como las que se deben desplegar realmente.
+
+    Parámetros:
+        rsus: dict de RSU candidatos {id: {"x", "y", "grado"}} (el mismo que
+              usa el resto del Módulo 2: junctions_rsu).
+        ids_desplegados: lista de ids de RSU (claves de `rsus`) que el solver
+              eligió desplegar (res["seleccionados_backend"]).
+        edificios: dict de edificios {id: [[x, y], ...]}.
+        proy: parámetros de proyección para convertir SUMO → lat/lon.
+        radio_cobertura_m: radio de cobertura (m) a dibujar alrededor de cada
+              RSU desplegada (0 = no dibujar).
+
+    Retorna:
+        Objeto folium.Map con candidatas (gris) y desplegadas (verde) resaltadas.
+    """
+    from backend.parsear_xml import convertir_xy_a_lonlat
+
+    orig = proy["orig"]
+    centro_lat = (orig[1] + orig[3]) / 2
+    centro_lon = (orig[0] + orig[2]) / 2
+
+    m = folium.Map(
+        location=[centro_lat, centro_lon],
+        zoom_start=17,
+        tiles="OpenStreetMap",
+        control_scale=True
+    )
+    folium.TileLayer(
+        tiles="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+        attr="CARTO", name="Claro"
+    ).add_to(m)
+
+    desplegados = set(ids_desplegados or [])
+
+    # ---- CAPA 1: Edificios ----
+    grupo_edificios = folium.FeatureGroup(name="🏢 Edificios")
+    for e_id, coords_sumo in edificios.items():
+        vertices = [convertir_xy_a_lonlat(p[0], p[1], proy) for p in coords_sumo]
+        folium.Polygon(
+            locations=vertices,
+            color="#f97316", fill=True, fill_color="#fb923c",
+            fill_opacity=0.28, weight=1.2,
+            tooltip=f"<b>Edificio:</b> {e_id}"
+        ).add_to(grupo_edificios)
+    grupo_edificios.add_to(m)
+
+    # ---- CAPA 2: Cobertura de las RSU desplegadas (círculos verdes) ----
+    if radio_cobertura_m and radio_cobertura_m > 0:
+        grupo_cobertura = folium.FeatureGroup(name="📶 Cobertura RSU desplegadas")
+        for rsu_id in desplegados:
+            rsu = rsus.get(rsu_id)
+            if not rsu:
+                continue
+            lat, lon = convertir_xy_a_lonlat(rsu["x"], rsu["y"], proy)
+            folium.Circle(
+                location=[lat, lon], radius=radio_cobertura_m,
+                color="#16a34a", fill=True, fill_color="#22c55e",
+                fill_opacity=0.10, weight=1.5, dash_array="6, 4",
+                tooltip=f"<b>📶 Cobertura</b> {rsu_id} — {radio_cobertura_m} m"
+            ).add_to(grupo_cobertura)
+        grupo_cobertura.add_to(m)
+
+    # ---- CAPA 3: RSU candidatas NO desplegadas (gris, tenue) ----
+    grupo_no = folium.FeatureGroup(name="⚪ Candidatas (no desplegadas)")
+    for rsu_id, rsu in rsus.items():
+        if rsu_id in desplegados:
+            continue
+        lat, lon = convertir_xy_a_lonlat(rsu["x"], rsu["y"], proy)
+        folium.CircleMarker(
+            location=[lat, lon], radius=4,
+            color="#94a3b8", fill=True, fill_color="#cbd5e1",
+            fill_opacity=0.55, weight=1,
+            tooltip=(
+                f"<b>RSU candidata (no desplegada)</b><br>"
+                f"<b>ID:</b> {rsu_id}<br>"
+                f"<b>Grado:</b> {rsu.get('grado', '?')}"
+            )
+        ).add_to(grupo_no)
+    grupo_no.add_to(m)
+
+    # ---- CAPA 4: RSU DESPLEGADAS (verde, resaltadas) ----
+    grupo_si = folium.FeatureGroup(name="✅ RSU desplegadas (óptimo)")
+    for rsu_id in desplegados:
+        rsu = rsus.get(rsu_id)
+        if not rsu:
+            continue
+        lat, lon = convertir_xy_a_lonlat(rsu["x"], rsu["y"], proy)
+        folium.CircleMarker(
+            location=[lat, lon], radius=10,
+            color="#166534", fill=True, fill_color="#22c55e",
+            fill_opacity=0.95, weight=3,
+            tooltip=(
+                f"<b>✅ RSU DESPLEGADA</b><br>"
+                f"<b>ID:</b> {rsu_id}<br>"
+                f"<b>Grado:</b> {rsu.get('grado', '?')}<br>"
+                f"<b>Lat:</b> {lat:.6f}°<br>"
+                f"<b>Lon:</b> {lon:.6f}°"
+            ),
+            popup=(
+                f"<b>RSU desplegada — {rsu_id}</b><br>"
+                f"<b>Grado:</b> {rsu.get('grado', '?')}<br>"
+                f"<b>SUMO:</b> ({rsu['x']}, {rsu['y']})<br>"
+                f"<b>Geo:</b> ({lat:.6f}, {lon:.6f})"
+            )
+        ).add_to(grupo_si)
+    grupo_si.add_to(m)
+
+    folium.LayerControl(position="topright", collapsed=False).add_to(m)
+    return _ajustar_vista(m, proy)

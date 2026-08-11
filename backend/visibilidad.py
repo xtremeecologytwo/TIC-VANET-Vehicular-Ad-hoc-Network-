@@ -178,63 +178,179 @@ def _bboxes_se_solapan(ax_min: float, ay_min: float, ax_max: float, ay_max: floa
                 ay_max < by_min or by_max < ay_min)
 
 
+def _preparar_edificios(edificios) -> list:
+    """
+    Pre-empaqueta una colección de edificios como pares (vértices, bbox) para
+    NO tener que recalcular el bounding box de cada polígono en cada test de
+    LoS. Los tests de visibilidad se ejecutan millones de veces (vehículos ×
+    RSU × timesteps), y recomputar el bbox ahí era un desperdicio enorme.
+
+    Parámetros:
+        edificios: dict {id: [[x, y], ...]} o lista de polígonos [[x, y], ...].
+
+    Retorna:
+        Lista de tuplas (vertices, (xmin, ymin, xmax, ymax)).
+    """
+    it = edificios.values() if isinstance(edificios, dict) else edificios
+    return [(v, _calcular_bbox_edificio(v)) for v in it if len(v) >= 2]
+
+
+def _tiene_los_prep(vx: float, vy: float, rx: float, ry: float,
+                    edificios_prep: list) -> bool:
+    """
+    Núcleo del test de línea de vista, con los bounding boxes de los edificios
+    YA precalculados (ver _preparar_edificios). Es la versión "caliente" que se
+    llama en los bucles internos.
+
+    Parámetros:
+        vx, vy: posición del vehículo (SUMO, m).
+        rx, ry: posición del otro extremo — RSU o vehículo — (SUMO, m).
+        edificios_prep: lista de (vertices, bbox) de _preparar_edificios().
+
+    Retorna:
+        True si hay LoS directa; False si un edificio bloquea (NLoS).
+    """
+    seg_xmin = vx if vx < rx else rx
+    seg_xmax = vx if vx > rx else rx
+    seg_ymin = vy if vy < ry else ry
+    seg_ymax = vy if vy > ry else ry
+
+    for vertices, bbox in edificios_prep:
+        # Pre-filtro O(1): bbox del edificio vs bbox del segmento (ya cacheado)
+        if (seg_xmax < bbox[0] or bbox[2] < seg_xmin or
+                seg_ymax < bbox[1] or bbox[3] < seg_ymin):
+            continue
+
+        n_vertices = len(vertices)
+        for i in range(n_vertices):
+            j = (i + 1) % n_vertices
+            ex1, ey1 = vertices[i][0], vertices[i][1]
+            ex2, ey2 = vertices[j][0], vertices[j][1]
+            if _segmentos_intersectan(vx, vy, rx, ry, ex1, ey1, ex2, ey2):
+                return False
+
+        if _punto_dentro_poligono(vx, vy, vertices):
+            return False
+        if _punto_dentro_poligono(rx, ry, vertices):
+            return False
+
+    return True
+
+
 def tiene_linea_de_vista(vx: float, vy: float, rx: float, ry: float,
                           edificios_cercanos: list) -> bool:
     """
     Determina si existe línea de vista directa entre un vehículo en (vx, vy)
     y un RSU en (rx, ry), considerando los edificios como obstrucciones.
 
-    Algoritmo:
-      1. Calcular el bounding box del segmento V→RSU
-      2. Para cada edificio cercano:
-         a. Si el bbox del edificio no se solapa con el del segmento → ignorar
-         b. Si sí se solapa, verificar intersección del segmento con
-            cada arista del polígono del edificio
-         c. También verificar si V o RSU están DENTRO del edificio
-      3. Si algún edificio intersecta → return False (NLoS)
-      4. Si ninguno intersecta → return True (LoS)
-
-    Parámetros:
-        vx, vy: Posición del vehículo (coordenadas SUMO en metros).
-        rx, ry: Posición del RSU (coordenadas SUMO en metros).
-        edificios_cercanos: Lista de polígonos de edificios a evaluar.
-                           Cada elemento es una lista de vértices [[x,y], ...].
+    Envoltorio de compatibilidad: acepta una lista de polígonos crudos
+    (cada uno [[x, y], ...]), precalcula sus bounding boxes y delega en el
+    núcleo optimizado `_tiene_los_prep`. Los bucles internos de este módulo
+    usan directamente `_tiene_los_prep` con edificios ya preparados.
 
     Retorna:
         True si hay línea de vista directa (LoS).
         False si un edificio bloquea la vista (NLoS).
     """
-    # Bounding box del segmento V→RSU
-    seg_xmin = min(vx, rx)
-    seg_ymin = min(vy, ry)
-    seg_xmax = max(vx, rx)
-    seg_ymax = max(vy, ry)
+    return _tiene_los_prep(vx, vy, rx, ry, _preparar_edificios(edificios_cercanos))
 
-    for edificio in edificios_cercanos:
-        # Pre-filtro: bounding box del edificio vs bounding box del segmento
-        bbox = _calcular_bbox_edificio(edificio)
-        if not _bboxes_se_solapan(seg_xmin, seg_ymin, seg_xmax, seg_ymax,
-                                   bbox[0], bbox[1], bbox[2], bbox[3]):
-            continue
 
-        # Test completo: verificar si alguna arista del edificio
-        # intersecta con el segmento V→RSU
-        n_vertices = len(edificio)
-        for i in range(n_vertices):
-            j = (i + 1) % n_vertices
-            ex1, ey1 = edificio[i][0], edificio[i][1]
-            ex2, ey2 = edificio[j][0], edificio[j][1]
+# ============================================================
+# ÍNDICE ESPACIAL (grid uniforme) — evita comparar TODO contra TODO
+# ============================================================
 
-            if _segmentos_intersectan(vx, vy, rx, ry, ex1, ey1, ex2, ey2):
-                return False  # NLoS — un edificio bloquea la vista
+def _construir_grid(items: list, cell: float) -> dict:
+    """
+    Construye un grid uniforme (hash espacial) para consultas de vecindad.
 
-        # Verificar si algún extremo está dentro del edificio
-        if _punto_dentro_poligono(vx, vy, edificio):
-            return False
-        if _punto_dentro_poligono(rx, ry, edificio):
-            return False
+    Cada elemento se ubica en la celda entera (⌊x/cell⌋, ⌊y/cell⌋). Con
+    cell = radio de cobertura, todo elemento a distancia ≤ radio de un punto
+    cae forzosamente en la celda del punto o en una de sus 8 vecinas, así que
+    basta revisar 9 celdas en vez de todos los elementos.
 
-    return True  # LoS confirmado — ningún edificio bloquea
+    Parámetros:
+        items: lista de tuplas (clave, x, y).
+        cell: tamaño de celda (usar el radio de cobertura).
+
+    Retorna:
+        dict {(cx, cy): [(clave, x, y), ...]}.
+    """
+    grid = {}
+    inv = 1.0 / cell
+    for it in items:
+        c = (int(math.floor(it[1] * inv)), int(math.floor(it[2] * inv)))
+        grid.setdefault(c, []).append(it)
+    return grid
+
+
+def _candidatos_vecinos(grid: dict, x: float, y: float, cell: float) -> list:
+    """
+    Devuelve los elementos del grid que están en la celda de (x, y) y en sus
+    8 celdas vecinas (bloque 3×3). Son los únicos que pueden estar a distancia
+    ≤ cell del punto.
+    """
+    inv = 1.0 / cell
+    cx = int(math.floor(x * inv))
+    cy = int(math.floor(y * inv))
+    out = []
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            celda = grid.get((cx + dx, cy + dy))
+            if celda:
+                out.extend(celda)
+    return out
+
+
+def _grid_edificios(edificios_prep: list, cell: float) -> dict:
+    """
+    Indexa los edificios (ya preparados como (vertices, bbox)) en un grid
+    uniforme, insertando cada edificio en TODAS las celdas que cubre su bbox.
+
+    Sirve para, dado un segmento V→V (o V→RSU), recuperar en O(1) solo los
+    edificios que están en el camino, en vez de probar los miles del mapa.
+
+    Parámetros:
+        edificios_prep: lista de (vertices, bbox) de _preparar_edificios().
+        cell: tamaño de celda (usar el radio de cobertura).
+
+    Retorna:
+        dict {(cx, cy): [(vertices, bbox), ...]}.
+    """
+    grid = {}
+    inv = 1.0 / cell
+    for item in edificios_prep:
+        b = item[1]
+        cx0 = int(math.floor(b[0] * inv)); cx1 = int(math.floor(b[2] * inv))
+        cy0 = int(math.floor(b[1] * inv)); cy1 = int(math.floor(b[3] * inv))
+        for cx in range(cx0, cx1 + 1):
+            for cy in range(cy0, cy1 + 1):
+                grid.setdefault((cx, cy), []).append(item)
+    return grid
+
+
+def _edificios_para_segmento(grid: dict, x1: float, y1: float,
+                             x2: float, y2: float, cell: float) -> list:
+    """
+    Recupera los edificios candidatos a bloquear el segmento (x1,y1)-(x2,y2):
+    los de todas las celdas que toca el bounding box del segmento. Es un
+    superconjunto correcto (cualquier edificio que realmente cruce el segmento
+    tiene su bbox solapando el del segmento, luego cae en alguna de esas
+    celdas), así que el resultado del LoS es idéntico al de revisar todos.
+    """
+    inv = 1.0 / cell
+    cx0 = int(math.floor((x1 if x1 < x2 else x2) * inv))
+    cx1 = int(math.floor((x1 if x1 > x2 else x2) * inv))
+    cy0 = int(math.floor((y1 if y1 < y2 else y2) * inv))
+    cy1 = int(math.floor((y1 if y1 > y2 else y2) * inv))
+    if cx0 == cx1 and cy0 == cy1:
+        return grid.get((cx0, cy0), ())
+    out = []
+    for cx in range(cx0, cx1 + 1):
+        for cy in range(cy0, cy1 + 1):
+            celda = grid.get((cx, cy))
+            if celda:
+                out.extend(celda)
+    return out
 
 
 # ============================================================
@@ -259,23 +375,24 @@ def _precalcular_edificios_por_rsu(rsus: dict, edificios: dict,
         radio: Radio de cobertura efectivo en metros.
 
     Retorna:
-        Dict {rsu_id: [lista_de_poligonos_cercanos]}
+        Dict {rsu_id: [(vertices, bbox), ...]} ya preparado para el LoS.
     """
-    edificios_por_rsu = {}
+    # El bounding box de cada edificio se calcula UNA sola vez para TODAS las
+    # RSU (antes se recomputaba por cada RSU → 278× el trabajo). Con miles de
+    # edificios esto era el verdadero cuello de botella del pre-cálculo.
+    edificios_prep = _preparar_edificios(edificios)
 
+    edificios_por_rsu = {}
     for rsu_id, rsu_datos in rsus.items():
         rx, ry = rsu_datos["x"], rsu_datos["y"]
-
         # Cuadrado envolvente del círculo de cobertura
-        rsu_bbox = (rx - radio, ry - radio, rx + radio, ry + radio)
+        rx_min, ry_min, rx_max, ry_max = rx - radio, ry - radio, rx + radio, ry + radio
 
-        cercanos = []
-        for e_id, vertices in edificios.items():
-            bbox = _calcular_bbox_edificio(vertices)
-            if _bboxes_se_solapan(rsu_bbox[0], rsu_bbox[1], rsu_bbox[2], rsu_bbox[3],
-                                   bbox[0], bbox[1], bbox[2], bbox[3]):
-                cercanos.append(vertices)
-
+        cercanos = [
+            (vertices, bbox) for (vertices, bbox) in edificios_prep
+            if not (rx_max < bbox[0] or bbox[2] < rx_min or
+                    ry_max < bbox[1] or bbox[3] < ry_min)
+        ]
         edificios_por_rsu[rsu_id] = cercanos
 
     return edificios_por_rsu
@@ -316,8 +433,15 @@ def generar_tuplas_visibilidad(datos_fcd: dict, rsus: dict, edificios: dict,
             {"t": float, "vehiculo": str, "rsu": str, "distancia": float}
         - estadisticas: Diccionario con resumen por RSU y general.
     """
-    # Pre-calcular edificios cercanos a cada RSU (optimización O(1) por RSU)
+    # Pre-calcular edificios cercanos a cada RSU (ya preparados con su bbox)
     edificios_cercanos = _precalcular_edificios_por_rsu(rsus, edificios, radio_obu)
+
+    # Índice espacial de las RSU (posiciones fijas): con celda = radio_obu, cada
+    # vehículo solo compara contra las RSU de su celda y las 8 vecinas, no las N.
+    cell = radio_obu if radio_obu > 0 else 1.0
+    rsu_items = [(rid, rd["x"], rd["y"]) for rid, rd in rsus.items()]
+    grid_rsu = _construir_grid(rsu_items, cell)
+    radio_obu_sq = radio_obu * radio_obu
 
     tuplas = []
     # Estadísticas por RSU
@@ -333,25 +457,23 @@ def generar_tuplas_visibilidad(datos_fcd: dict, rsus: dict, edificios: dict,
             vx, vy = vehiculo["x"], vehiculo["y"]
             v_id = vehiculo["id"]
 
-            for rsu_id, rsu_datos in rsus.items():
-                rx, ry = rsu_datos["x"], rsu_datos["y"]
-
-                # Paso 1: Test rápido de distancia (O(1))
-                distancia = math.sqrt((vx - rx) ** 2 + (vy - ry) ** 2)
-
-                if distancia > radio_obu:
+            # Solo las RSU en el vecindario 3×3 del vehículo (candidatas reales)
+            for rsu_id, rx, ry in _candidatos_vecinos(grid_rsu, vx, vy, cell):
+                # Paso 1: test rápido de distancia² (evita el sqrt en el filtro)
+                dist_sq = (vx - rx) ** 2 + (vy - ry) ** 2
+                if dist_sq > radio_obu_sq:
                     continue  # Fuera de rango del OBU — no hay contacto
 
-                # Paso 2: Test de LoS — verificar que no haya edificios bloqueando
+                # Paso 2: Test de LoS con edificios ya preparados (bbox cacheado)
                 edificios_del_rsu = edificios_cercanos.get(rsu_id, [])
 
-                if tiene_linea_de_vista(vx, vy, rx, ry, edificios_del_rsu):
+                if _tiene_los_prep(vx, vy, rx, ry, edificios_del_rsu):
                     # LoS confirmado → añadir tupla
                     tuplas.append({
                         "t": t,
                         "vehiculo": f"V{v_id}",
                         "rsu": rsu_id,
-                        "distancia": round(distancia, 2)
+                        "distancia": round(math.sqrt(dist_sq), 2)
                     })
 
                     # Actualizar estadísticas
@@ -452,7 +574,8 @@ def _precalcular_edificios_por_zona(edificios: dict, bbox: tuple,
         e_bbox = _calcular_bbox_edificio(vertices)
         if _bboxes_se_solapan(bx_min, by_min, bx_max, by_max,
                                e_bbox[0], e_bbox[1], e_bbox[2], e_bbox[3]):
-            cercanos.append(vertices)
+            # (vertices, bbox) ya preparado para el LoS caliente
+            cercanos.append((vertices, e_bbox))
 
     return cercanos
 
@@ -503,6 +626,13 @@ def generar_tuplas_v2v(datos_fcd: dict, edificios: dict,
     total_pares_en_rango = 0
     stats_vehiculo = {}  # {v_id: {"conexiones": int, "vecinos": set}}
 
+    # Índice espacial de los edificios (estáticos): se construye UNA vez y se
+    # reutiliza en todos los instantes. Cada par V→V solo consulta los
+    # edificios en el camino del segmento, no los miles del mapa.
+    cell = radio_obu if radio_obu > 0 else 1.0
+    grid_edif = _grid_edificios(_preparar_edificios(edificios), cell)
+    radio_obu_sq = radio_obu * radio_obu
+
     timesteps_ordenados = sorted(datos_fcd.keys())
 
     for t in timesteps_ordenados:
@@ -526,37 +656,36 @@ def generar_tuplas_v2v(datos_fcd: dict, edificios: dict,
         # Inicializar Matriz A como n×n de ceros
         A = [[0] * n for _ in range(n)]
 
-        # Calcular bbox de todos los vehículos para pre-filtrar edificios
-        xs = [v["x"] for v in vehiculos]
-        ys = [v["y"] for v in vehiculos]
-        bbox_vehiculos = (min(xs), min(ys), max(xs), max(ys))
+        # Índice espacial de los vehículos de este instante: con celda =
+        # radio_obu, cada vehículo solo se empareja con los de su celda 3×3,
+        # convirtiendo el O(n²) de pares en ~O(n·k) con k = vecinos cercanos.
+        veh_items = [(idx, vehiculos[idx]["x"], vehiculos[idx]["y"])
+                     for idx in range(n)]
+        grid_veh = _construir_grid(veh_items, cell)
 
-        # Pre-filtrar edificios en la zona activa
-        edificios_zona = _precalcular_edificios_por_zona(
-            edificios, bbox_vehiculos, margen=radio_obu
-        )
-
-        # Evaluar todos los pares (i < j) para evitar duplicados
+        # Evaluar cada vehículo contra sus vecinos de grid, con guarda j > i
+        # para no duplicar ni repetir el par (idéntico al antiguo i < j).
         for i in range(n):
-            for j in range(i + 1, n):
+            vi = vehiculos[i]
+            vix, viy = vi["x"], vi["y"]
+
+            for j, vjx, vjy in _candidatos_vecinos(grid_veh, vix, viy, cell):
+                if j <= i:
+                    continue  # el par se procesa una sola vez (i < j)
                 total_pares_evaluados += 1
 
-                vi = vehiculos[i]
-                vj = vehiculos[j]
-                vix, viy = vi["x"], vi["y"]
-                vjx, vjy = vj["x"], vj["y"]
-
-                # Test rápido de distancia
-                distancia = math.sqrt((vix - vjx) ** 2 + (viy - vjy) ** 2)
-
-                if distancia > radio_obu:
+                # Test rápido de distancia² (sin sqrt en el filtro)
+                dist_sq = (vix - vjx) ** 2 + (viy - vjy) ** 2
+                if dist_sq > radio_obu_sq:
                     continue
 
                 total_pares_en_rango += 1
+                vj = vehiculos[j]
 
-                # Test de LoS
-                if tiene_linea_de_vista(vix, viy, vjx, vjy, edificios_zona):
-                    dist_redondeada = round(distancia, 2)
+                # Test de LoS: solo los edificios en el camino del segmento
+                edif_seg = _edificios_para_segmento(grid_edif, vix, viy, vjx, vjy, cell)
+                if _tiene_los_prep(vix, viy, vjx, vjy, edif_seg):
+                    dist_redondeada = round(math.sqrt(dist_sq), 2)
 
                     # Registrar tupla vi → vj
                     tuplas_v2v.append({

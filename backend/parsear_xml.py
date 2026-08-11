@@ -190,43 +190,47 @@ def convertir_xy_a_lonlat(x: float, y: float, proy: dict) -> tuple[float, float]
 
 def calcular_grado_junctions(net_xml_path: str) -> dict[str, int]:
     """
-    Calcula el grado de conectividad de cada junction, es decir,
-    cuántas aristas (calles) no-internas están conectadas a ella.
-    
-    En SUMO, una calle bidireccional cuenta como 2 aristas (ida y vuelta).
-    Entonces:
-      - grado 2 = una sola calle pasa por ahí (nodo intermedio)
-      - grado 4 = cruce de 2 calles bidireccionales (intersección en cruz)
-      - grado 6 = cruce de 3 calles bidireccionales (intersección en Y/T triple)
-    
+    Calcula el grado de conectividad de cada junction como el número de
+    VECINOS ÚNICOS en el grafo NO DIRIGIDO de la red.
+
+    Las aristas dirigidas y paralelas de SUMO (una calle bidireccional
+    genera 2 edges, uno por sentido) se reducen a un par no ordenado
+    {from, to}, de modo que dos junctions vecinas cuentan una sola vez.
+    Así, el grado es el número de calles distintas que confluyen:
+      - grado 2 = nodo intermedio (una sola calle pasa por ahí)
+      - grado 4 = cruce de 2 calles (intersección en cruz +)
+      - grado 6 = cruce de 3 calles (intersección en Y/estrella)
+
     Parámetros:
         net_xml_path: Ruta al archivo mapa.net.xml
-    
+
     Retorna:
-        Diccionario {junction_id: grado}
+        Diccionario {junction_id: grado}  (grado = nº de vecinos únicos)
     """
     try:
         tree = ET.parse(net_xml_path)
         root = tree.getroot()
     except (ET.ParseError, FileNotFoundError):
         return {}
-    
-    grados = {}
-    
+
+    # Conjunto de vecinos por junction (grafo simple no dirigido)
+    vecinos: dict[str, set] = {}
+
     for edge in root.findall("edge"):
         # Ignorar aristas internas (las de dentro de las junction)
         if edge.get("function") == "internal":
             continue
-        
+
         from_id = edge.get("from")
         to_id = edge.get("to")
-        
-        if from_id:
-            grados[from_id] = grados.get(from_id, 0) + 1
-        if to_id:
-            grados[to_id] = grados.get(to_id, 0) + 1
-    
-    return grados
+        # descartar aristas incompletas o lazos (from == to)
+        if not from_id or not to_id or from_id == to_id:
+            continue
+
+        vecinos.setdefault(from_id, set()).add(to_id)
+        vecinos.setdefault(to_id, set()).add(from_id)
+
+    return {j: len(vs) for j, vs in vecinos.items()}
 
 
 def filtrar_junctions_rsu(junctions: dict, net_xml_path: str,
@@ -273,9 +277,13 @@ def filtrar_junctions_rsu(junctions: dict, net_xml_path: str,
         return candidatos
     
     # Paso 3: Clustering espacial greedy (prioriza mayor grado)
-    # Ordenar por grado descendente para que los nodos más conectados
-    # sean los "centros" del cluster
-    ordenados = sorted(candidatos.items(), key=lambda x: x[1]["grado"], reverse=True)
+    # Ordenar por grado DESCENDENTE y, ante empate, por id de junction
+    # ASCENDENTE. El desempate determinista hace que corridas repetidas
+    # sobre la misma red produzcan exactamente el mismo conjunto de RSU.
+    ordenados = sorted(
+        candidatos.items(),
+        key=lambda x: (-x[1]["grado"], str(x[0]))
+    )
     
     centros = {}  # Resultado final: junctions representativas
     
