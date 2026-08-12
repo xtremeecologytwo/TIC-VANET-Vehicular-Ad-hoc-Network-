@@ -206,7 +206,8 @@ export default function App() {
               ) : bbox ? (
                 <span className="readout mono">{bbox.min_lat.toFixed(3)}, {bbox.min_lon.toFixed(3)}</span>
               ) : null}
-              <button className={`chip-btn ${drawing ? "on" : ""}`} onClick={() => setDrawing((d) => !d)}>
+              <button className={`chip-btn ${drawing ? "on" : ""}`}
+                onClick={() => { if (drawing) setDrawing(false); else nuevoEscenario(); }}>
                 {drawing ? "✕ Cancelar" : "◱ Seleccionar área"}
               </button>
             </span>

@@ -115,8 +115,8 @@ export default function ScenarioMap({
         {(candidatas ?? [])
           .filter((r) => !desplegadasIds.has(r.id))
           .map((r) => (
-            <CircleMarker key={`c-${r.id}`} center={[r.lat, r.lon]} radius={4}
-              pathOptions={{ color: "#94a3b8", weight: 1, fillColor: "#cbd5e1", fillOpacity: 0.6 }} />
+            <CircleMarker key={`c-${r.id}`} center={[r.lat, r.lon]} radius={5}
+              pathOptions={{ color: "#7f1d1d", weight: 1, fillColor: "#ef4444", fillOpacity: 0.85 }} />
           ))}
 
         {(desplegadas ?? []).map((r) => (
