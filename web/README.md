@@ -46,9 +46,13 @@ web/src/
 
 ## Estado de la migración
 
-- [x] API FastAPI que reutiliza el backend (scenario, rsu, simulate, connectivity, optimize)
+- [x] API FastAPI que reutiliza el backend (scenario, rsu, simulate, connectivity,
+      optimize, tuples, multihop)
 - [x] SPA: layout de consola, stepper M1/M2/M3, mapa con dibujo de rectángulo,
       edificios + RSU candidatas/desplegadas, KPIs, flujo completo contra la API
-- [ ] Tablas de tuplas V2I/V2V y visor de matrices A/B (pendiente)
-- [ ] Visor multisalto (R_h, S_h, D_H) (pendiente)
-- [ ] Animación de vehículos por instante en el mapa (endpoint `/api/connectivity` ya listo)
+- [x] Animación de vehículos + enlaces V2I/V2V por instante (línea de tiempo)
+- [x] Tablas de tuplas V2I/V2V
+- [x] Visor de matrices A/B por instante
+- [x] Visor multisalto (resumen por salto R_h/S_h + desconectados)
+- [ ] Alinear el `output/` de demo (el pre-cargado es un mosaico de sesiones)
+- [ ] Deploy combinado (servir `web/dist` desde FastAPI) — ver `../DESPLIEGUE.md`

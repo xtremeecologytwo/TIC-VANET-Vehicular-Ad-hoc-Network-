@@ -35,6 +35,17 @@ export interface ConnFrame {
   v2i: { v: string; rsu: string; a: LatLon; b: LatLon }[];
   v2v: { a: LatLon; b: LatLon }[];
 }
+export interface V2iTuple { t: number; vehiculo: string; rsu: string; distancia: number; }
+export interface V2vTuple { t: number; vehiculo_i: string; vehiculo_j: string; distancia: number; }
+export interface PorSalto { h: number; pares_acumulados: number; vehiculos_conectados: number; pares_nuevos: number; }
+export interface Multihop {
+  t: number; H: number; vehiculos: string[]; rsu_ids: string[];
+  A: number[][]; B: number[][]; R: number[][][]; S: number[][][]; D: number[][]; d: number[];
+  resumen: {
+    n_vehiculos: number; m_rsus: number; por_salto: PorSalto[];
+    vehiculos_desconectados: number; ids_desconectados: string[];
+  };
+}
 export interface AppState {
   tiene_escenario: boolean; tiene_rsus: boolean; tiene_simulacion: boolean;
   n_junctions: number; n_edificios: number; n_rsus: number;
@@ -68,4 +79,7 @@ export const api = {
     req<OptResult>("/api/optimize", { method: "POST", body: JSON.stringify(body) }),
   timesteps: () => req<{ timesteps: number[] }>("/api/timesteps"),
   connectivity: (t: number) => req<ConnFrame>(`/api/connectivity?t=${t}`),
+  tuplesV2i: (limit = 500) => req<{ total: number; tuplas: V2iTuple[] }>(`/api/tuples/v2i?limit=${limit}`),
+  tuplesV2v: (limit = 500) => req<{ total: number; tuplas: V2vTuple[] }>(`/api/tuples/v2v?limit=${limit}`),
+  multihop: (t: number, H: number) => req<Multihop>(`/api/multihop?t=${t}&H=${H}`),
 };

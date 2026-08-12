@@ -40,6 +40,7 @@ from backend.visibilidad import (
     generar_tuplas_v2v, guardar_tuplas_v2v_json,
 )
 from backend.exportar_dat import exportar_dat_desde_memoria
+from backend.multisalto import analizar_timestep
 from optimizacion.optimizar_rsu import optimizar
 
 
@@ -388,4 +389,57 @@ def optimize(req: OptReq):
         "status": res["status"],
         "desplegadas": desplegadas,
         "candidatas": _rsus_geojson(STATE["rsus"]),
+    }
+
+
+@app.get("/api/tuples/v2i")
+def tuples_v2i(limit: int = 500):
+    """Tuplas de visibilidad V2I ⟨t, V, RSU⟩ (paginadas con `limit`)."""
+    if STATE["tuplas_v2i"] is None:
+        raise HTTPException(409, "Corre la simulación primero.")
+    t = STATE["tuplas_v2i"]
+    return {"total": len(t), "tuplas": t[:limit]}
+
+
+@app.get("/api/tuples/v2v")
+def tuples_v2v(limit: int = 500):
+    """Tuplas de conectividad V2V ⟨t, Vi, Vj⟩ (paginadas con `limit`)."""
+    if STATE["tuplas_v2v"] is None:
+        raise HTTPException(409, "Corre la simulación primero.")
+    t = STATE["tuplas_v2v"]
+    return {"total": len(t), "tuplas": t[:limit]}
+
+
+def _mkey(t: float):
+    """Localiza la clave del instante t en matrices_v2v (float o str)."""
+    m = STATE["matrices_v2v"] or {}
+    return next((k for k in m if abs(float(k) - t) < 1e-6), None)
+
+
+@app.get("/api/multihop")
+def multihop(t: float, H: int = 3):
+    """
+    Análisis de un instante: matrices A (V2V), B (V2I), acumuladas R_h,
+    primera aparición S_h, desconexión D_H y vector d. Alimenta tanto el visor
+    de matrices A/B como el de multisalto.
+    """
+    if STATE["matrices_v2v"] is None or STATE["rsus"] is None:
+        raise HTTPException(409, "Corre la simulación primero.")
+    key = _mkey(t)
+    if key is None:
+        raise HTTPException(404, f"Instante {t} no encontrado.")
+    rsu_ids = sorted(STATE["rsus"].keys())
+    res = analizar_timestep(STATE["matrices_v2v"][key], STATE["tuplas_v2i"],
+                            float(t), rsu_ids, H=H, forzar_simetria=True)
+    return {
+        "t": t, "H": H,
+        "vehiculos": res["vehiculos"],
+        "rsu_ids": [str(r) for r in res["rsu_ids"]],
+        "A": res["A"].tolist(),
+        "B": res["B"].tolist(),
+        "R": [m.tolist() for m in res["R"]],
+        "S": [m.tolist() for m in res["S"]],
+        "D": res["D"].tolist(),
+        "d": res["d"].tolist(),
+        "resumen": res["resumen"],
     }

@@ -113,5 +113,43 @@
   font-family: var(--font-mono); }
 .tl-legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-left: 8px; }
 
+/* ---------- resultados (tablas / matrices / multisalto) ---------- */
+.results { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r);
+  box-shadow: var(--shadow); overflow: hidden; }
+.rtabs { display: flex; align-items: center; gap: 2px; padding: 8px 10px; border-bottom: 1px solid var(--line);
+  background: var(--surface-2); }
+.rtabs button { border: 1px solid transparent; background: transparent; color: var(--muted); font-size: 12.5px;
+  font-weight: 600; padding: 6px 12px; border-radius: var(--r-sm); cursor: pointer; }
+.rtabs button:hover { color: var(--ink); }
+.rtabs button.on { color: var(--accent); background: var(--accent-wash); border-color: var(--line); }
+.rt-t { margin-left: auto; font-size: 11px; color: var(--faint); }
+
+.tablewrap { max-height: 360px; overflow: auto; padding: 4px 14px 12px; }
+.dtable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.dtable th { position: sticky; top: 0; background: var(--surface); text-align: left; color: var(--faint);
+  font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 600;
+  padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.dtable td { padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.dtable tbody tr:hover { background: var(--surface-2); }
+
+.matgrid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; padding: 14px; }
+@media (max-width: 760px) { .matgrid2 { grid-template-columns: 1fr; } }
+.matlab { font-size: 12px; font-weight: 600; margin-bottom: 8px; color: var(--ink); }
+.matwrap { overflow: auto; max-height: 340px; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.mat { border-collapse: collapse; font-size: 9px; }
+.mat th { position: sticky; top: 0; background: var(--surface-2); color: var(--faint); font-weight: 600;
+  font-family: var(--font-mono); padding: 3px 4px; border: 1px solid var(--line); white-space: nowrap; }
+.mat tbody th { position: static; text-align: right; }
+.mat td { width: 13px; height: 13px; border: 1px solid var(--line); background: var(--surface); }
+.mat.accent td.on { background: var(--accent); }
+.mat.ok td.on { background: var(--ok); }
+.mat .corner { background: var(--surface-2); }
+.matnote { font-size: 10.5px; color: var(--faint); padding: 6px 14px; }
+
+.empty { padding: 20px 14px; color: var(--muted); font-size: 12.5px; }
+.mh-note { margin: 8px 14px 14px; padding: 9px 12px; border-radius: var(--r-sm); font-size: 12px; }
+.mh-note.ok { background: var(--ok-wash); border: 1px solid rgba(15,157,107,0.28); color: var(--ok); }
+.mh-note.warn { background: #fbf3e3; border: 1px solid rgba(185,119,11,0.3); color: var(--warn); }
+
 /* Leaflet: que los controles no tapen las esquinas del marco */
 .leaflet-top.leaflet-left { margin: 6px; }

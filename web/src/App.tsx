@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import ScenarioMap from "./components/ScenarioMap";
+import ResultsTabs from "./components/ResultsTabs";
 import { api } from "./api/client";
 import type { BBox, LatLon, Rsu, ConnFrame } from "./api/client";
 import "./App.css";
@@ -249,6 +250,13 @@ export default function App() {
                 tone={k === "Objetivo" || k === "RSU desplegadas" ? "ok" : undefined} />
             ))}
           </div>
+        </>
+      )}
+
+      {timesteps.length > 0 && (
+        <>
+          <div className="section-h"><span className="k">Análisis</span><span className="rule" /></div>
+          <ResultsTabs t={timesteps[tIdx] ?? null} H={p.H} />
         </>
       )}
 
