@@ -1,8 +1,8 @@
-# SmartCityNet — Frontend React (migración)
+# SmartCityNet — Frontend React
 
 SPA en **React + TypeScript + Vite** que consume la **API FastAPI** (`../api/`).
-Es la migración del frontend Streamlit: la ciencia (SUMO, LoS, multisalto,
-optimización) sigue en `backend/` y `optimizacion/`, expuesta como HTTP.
+Es el frontend del proyecto: la ciencia (SUMO, LoS, multisalto, optimización)
+vive en `backend/` y `optimizacion/`, expuesta como HTTP por `api/`.
 
 ```
 web/ (React SPA, :5173)  ──HTTP /api──►  api/ (FastAPI, :8000)  ──►  backend/ + optimizacion/
@@ -33,26 +33,40 @@ npm run build      # genera web/dist/ (estático)
 En producción, el `dist/` se sirve como estático y la API corre aparte (o se
 sirve el `dist/` desde la propia FastAPI). Ver `../DESPLIEGUE.md`.
 
-## Estructura
+## Estructura y responsabilidades
 
 ```
 web/src/
-├── api/client.ts            # cliente tipado de la API
-├── design/tokens.css        # sistema de diseño (consola clara)
-├── components/ScenarioMap.tsx  # mapa react-leaflet + dibujo + capas
-├── App.tsx                  # layout de consola + flujo M1→M2→M3
-└── App.css                  # estilos de la consola + marco "plotter"
+├── main.tsx                    # punto de entrada (monta <App/>)
+├── App.tsx                     # orquestador: estado, flujo M1→M2→M3, línea de tiempo
+├── App.css                     # estilos de la consola + marco "plotter"
+├── api/client.ts               # cliente HTTP tipado (una función por endpoint)
+├── design/tokens.css           # sistema de diseño (paleta, tipografía)
+└── components/
+    ├── ScenarioMap.tsx         # mapa react-leaflet: dibujo del área + capas
+    └── ResultsTabs.tsx         # tablas de tuplas, matrices A/B, multisalto
 ```
 
-## Estado de la migración
+- **`client.ts`** — expone `api.generate/filterRsu/simulate/connectivity/optimize/
+  timesteps/tuplesV2i/tuplesV2v/multihop` con sus tipos de respuesta. Un solo lugar
+  para hablar con el backend.
+- **`App.tsx`** — guarda los parámetros y los resultados; cada botón dispara una
+  acción (`generar`, `filtrar`, `simular`, `optimizar`) que llama al cliente y
+  actualiza mapa + KPIs. Controla también el *play* de la línea de tiempo.
+- **`ScenarioMap.tsx`** — `DrawRectangle` selecciona el área con **2 clics** (sin
+  leaflet-draw); `FitBounds` encuadra e invalida el tamaño (evita el desalineo del
+  primer render). Capas: edificios (GeoJSON), RSU candidatas/desplegadas y, por
+  instante, vehículos + enlaces V2I/V2V.
+- **`ResultsTabs.tsx`** — pestañas de tuplas, rejillas de las matrices A/B y el
+  resumen multisalto del instante activo.
+
+## Estado
 
 - [x] API FastAPI que reutiliza el backend (scenario, rsu, simulate, connectivity,
       optimize, tuples, multihop)
-- [x] SPA: layout de consola, stepper M1/M2/M3, mapa con dibujo de rectángulo,
-      edificios + RSU candidatas/desplegadas, KPIs, flujo completo contra la API
+- [x] Consola: stepper M1/M2/M3, **selección del área por 2 clics**, edificios +
+      RSU candidatas/desplegadas, KPIs, flujo completo contra la API
 - [x] Animación de vehículos + enlaces V2I/V2V por instante (línea de tiempo)
-- [x] Tablas de tuplas V2I/V2V
-- [x] Visor de matrices A/B por instante
-- [x] Visor multisalto (resumen por salto R_h/S_h + desconectados)
+- [x] Tablas de tuplas V2I/V2V · matrices A/B · multisalto
 - [ ] Alinear el `output/` de demo (el pre-cargado es un mosaico de sesiones)
 - [ ] Deploy combinado (servir `web/dist` desde FastAPI) — ver `../DESPLIEGUE.md`

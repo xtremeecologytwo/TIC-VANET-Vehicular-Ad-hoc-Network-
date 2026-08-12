@@ -1,49 +1,55 @@
-import { useEffect, useMemo } from "react";
-import { MapContainer, TileLayer, GeoJSON, CircleMarker, Polyline, useMap } from "react-leaflet";
+import { useEffect, useMemo, useState } from "react";
+import {
+  MapContainer, TileLayer, GeoJSON, CircleMarker, Polyline, Rectangle,
+  useMap, useMapEvents,
+} from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import "leaflet-draw";
-import "leaflet-draw/dist/leaflet.draw.css";
 import type { FeatureCollection } from "geojson";
 import type { BBox, LatLon, Rsu, ConnFrame } from "../api/client";
 
-/* Captura de rectángulo con leaflet-draw → devuelve el bbox al padre. */
-function DrawRectangle({ onBbox }: { onBbox: (b: BBox) => void }) {
-  const map = useMap();
-  useEffect(() => {
-    const group = new L.FeatureGroup();
-    map.addLayer(group);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const control = new (L.Control as any).Draw({
-      draw: {
-        polyline: false, polygon: false, circle: false, marker: false, circlemarker: false,
-        rectangle: { shapeOptions: { color: "#2557a7", weight: 2, fillColor: "#2557a7", fillOpacity: 0.08 } },
-      },
-      edit: { featureGroup: group, edit: false, remove: false },
-    });
-    map.addControl(control);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const onCreated = (e: any) => {
-      group.clearLayers();
-      group.addLayer(e.layer);
-      const b = e.layer.getBounds();
+/**
+ * Selección del área por DOS clics (sin leaflet-draw, que rompe con Leaflet
+ * moderno). Primer clic fija una esquina; el movimiento del ratón dibuja la
+ * previsualización; el segundo clic cierra el rectángulo y entrega el bbox.
+ * Si no se está dibujando, muestra el rectángulo ya confirmado (`bbox`).
+ */
+function DrawRectangle({ active, bbox, onBbox }: {
+  active: boolean; bbox?: BBox | null; onBbox: (b: BBox) => void;
+}) {
+  const [c1, setC1] = useState<L.LatLng | null>(null);
+  const [cur, setCur] = useState<L.LatLng | null>(null);
+
+  useMapEvents({
+    click(e) {
+      if (!active) return;
+      if (!c1) { setC1(e.latlng); setCur(e.latlng); return; }
+      const b = L.latLngBounds(c1, e.latlng);
       onBbox({ min_lon: b.getWest(), min_lat: b.getSouth(), max_lon: b.getEast(), max_lat: b.getNorth() });
-    };
-    map.on(L.Draw.Event.CREATED, onCreated);
-    return () => {
-      map.off(L.Draw.Event.CREATED, onCreated);
-      map.removeControl(control);
-      map.removeLayer(group);
-    };
-  }, [map, onBbox]);
+      setC1(null); setCur(null);
+    },
+    mousemove(e) { if (active && c1) setCur(e.latlng); },
+  });
+
+  // Reiniciar la esquina temporal cuando se apaga el modo dibujo.
+  useEffect(() => { if (!active) { setC1(null); setCur(null); } }, [active]);
+
+  if (active && c1 && cur) {
+    return <Rectangle bounds={L.latLngBounds(c1, cur)}
+      pathOptions={{ color: "#2557a7", weight: 2, dashArray: "5 5", fillColor: "#2557a7", fillOpacity: 0.08 }} />;
+  }
+  if (bbox) {
+    return <Rectangle bounds={[[bbox.min_lat, bbox.min_lon], [bbox.max_lat, bbox.max_lon]]}
+      pathOptions={{ color: "#2557a7", weight: 2, fillColor: "#2557a7", fillOpacity: 0.06 }} />;
+  }
   return null;
 }
 
+/** Encaja la vista al escenario y re-invalida el tamaño tras el layout. */
 function FitBounds({ bounds }: { bounds?: [LatLon, LatLon] | null }) {
   const map = useMap();
   useEffect(() => {
     if (bounds) map.fitBounds(bounds, { padding: [24, 24] });
-    // el contenedor puede cambiar de tamaño tras el layout: re-invalidar
     const id = setTimeout(() => map.invalidateSize(), 200);
     return () => clearTimeout(id);
   }, [bounds, map]);
@@ -56,10 +62,14 @@ export interface MapProps {
   desplegadas?: Rsu[] | null;
   bounds?: [LatLon, LatLon] | null;
   frame?: ConnFrame | null;
+  drawing?: boolean;
+  bbox?: BBox | null;
   onBbox?: (b: BBox) => void;
 }
 
-export default function ScenarioMap({ edificios, candidatas, desplegadas, bounds, frame, onBbox }: MapProps) {
+export default function ScenarioMap({
+  edificios, candidatas, desplegadas, bounds, frame, drawing, bbox, onBbox,
+}: MapProps) {
   const desplegadasIds = useMemo(() => new Set((desplegadas ?? []).map((r) => r.id)), [desplegadas]);
 
   const geojson = useMemo<FeatureCollection | null>(() => {
@@ -75,7 +85,7 @@ export default function ScenarioMap({ edificios, candidatas, desplegadas, bounds
   }, [edificios]);
 
   return (
-    <div className="plot">
+    <div className={`plot ${drawing ? "drawing" : ""}`}>
       <span className="corner tl" /><span className="corner tr" />
       <span className="corner bl" /><span className="corner br" />
       <MapContainer center={[-0.2186, -78.5097]} zoom={13} zoomControl
@@ -83,7 +93,7 @@ export default function ScenarioMap({ edificios, candidatas, desplegadas, bounds
         <TileLayer
           url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
           attribution='&copy; OpenStreetMap &copy; CARTO' />
-        {onBbox && <DrawRectangle onBbox={onBbox} />}
+        {onBbox && <DrawRectangle active={!!drawing} bbox={bbox} onBbox={onBbox} />}
         <FitBounds bounds={bounds} />
 
         {geojson && (
@@ -91,7 +101,6 @@ export default function ScenarioMap({ edificios, candidatas, desplegadas, bounds
             style={{ color: "#d97b2f", weight: 0.6, fillColor: "#f4a25a", fillOpacity: 0.4 }} />
         )}
 
-        {/* RSU candidatas no desplegadas (gris) */}
         {(candidatas ?? [])
           .filter((r) => !desplegadasIds.has(r.id))
           .map((r) => (
@@ -99,7 +108,6 @@ export default function ScenarioMap({ edificios, candidatas, desplegadas, bounds
               pathOptions={{ color: "#94a3b8", weight: 1, fillColor: "#cbd5e1", fillOpacity: 0.6 }} />
           ))}
 
-        {/* RSU desplegadas (verde, resaltadas) */}
         {(desplegadas ?? []).map((r) => (
           <CircleMarker key={`d-${r.id}`} center={[r.lat, r.lon]} radius={7}
             pathOptions={{ color: "#166534", weight: 2, fillColor: "#22c55e", fillOpacity: 0.95 }} />

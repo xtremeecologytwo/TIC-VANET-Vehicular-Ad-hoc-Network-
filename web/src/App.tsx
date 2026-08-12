@@ -71,6 +71,7 @@ export default function App() {
   const [tIdx, setTIdx] = useState(0);
   const [frame, setFrame] = useState<ConnFrame | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [drawing, setDrawing] = useState(false);
 
   const set = (k: keyof typeof DEF) => (v: number) => setP((s) => ({ ...s, [k]: v }));
 
@@ -186,18 +187,27 @@ export default function App() {
       <div className="console">
         <div className="panel">
           <div className="panel-hd">
-            <span className="ttl">Área de trabajo{timesteps.length ? "" : " — dibuja un rectángulo"}</span>
-            {frame ? (
-              <span className="readout mono">
-                t={frame.t}s · {frame.vehiculos.length} veh · {frame.v2i.length} V2I · {frame.v2v.length} V2V
-              </span>
-            ) : bbox ? (
-              <span className="readout mono">{bbox.min_lat.toFixed(3)}, {bbox.min_lon.toFixed(3)}</span>
-            ) : null}
+            <span className="ttl">Área de trabajo</span>
+            <span className="hd-right">
+              {drawing ? (
+                <span className="readout mono">2 clics en el mapa…</span>
+              ) : frame ? (
+                <span className="readout mono">
+                  t={frame.t}s · {frame.vehiculos.length} veh · {frame.v2i.length} V2I · {frame.v2v.length} V2V
+                </span>
+              ) : bbox ? (
+                <span className="readout mono">{bbox.min_lat.toFixed(3)}, {bbox.min_lon.toFixed(3)}</span>
+              ) : null}
+              <button className={`chip-btn ${drawing ? "on" : ""}`} onClick={() => setDrawing((d) => !d)}>
+                {drawing ? "✕ Cancelar" : "◱ Seleccionar área"}
+              </button>
+            </span>
           </div>
           <div className="panel-bd map-bd">
             <ScenarioMap edificios={edificios} candidatas={candidatas}
-              desplegadas={desplegadas} bounds={bounds} frame={frame} onBbox={setBbox} />
+              desplegadas={desplegadas} bounds={bounds} frame={frame}
+              drawing={drawing} bbox={bbox}
+              onBbox={(b) => { setBbox(b); setDrawing(false); }} />
           </div>
           {timesteps.length > 0 && (
             <div className="timeline">
