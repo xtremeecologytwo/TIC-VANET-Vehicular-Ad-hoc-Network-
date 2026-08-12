@@ -108,24 +108,19 @@ export default function App() {
     return () => clearInterval(id);
   }, [playing, timesteps]);
 
-  // Rehidratar: si el servidor ya tiene un escenario en output/, cargarlo.
+  // Arranca EN BLANCO: solo comprueba que la API responda (no carga el escenario
+  // precargado, para que el usuario seleccione el área desde cero).
   useEffect(() => {
-    api.state().then((s) => {
-      if (s.tiene_escenario && s.bounds) {
-        setBounds(s.bounds);
-        api.buildings().then((b) => setEdificios(b.edificios)).catch(() => {});
-        setKpis((k) => ({ ...k, Junctions: s.n_junctions, Edificios: s.n_edificios }));
-        if (s.tiene_simulacion) { setActivo(3); cargarTimesteps().catch(() => {}); }
-        else if (s.tiene_rsus) setActivo(2);
-      }
-    }).catch((e) => setError(`API no disponible: ${e.message}`));
-  }, [cargarTimesteps]);
+    api.health().catch(() =>
+      setError("API no disponible. Arranca el backend: uvicorn api.main:app --reload --port 8000"));
+  }, []);
 
   const generar = () => run("Generando escenario", async () => {
     if (!bbox) { setError("Dibuja un rectángulo en el mapa primero."); return; }
     const r = await api.generate({ bbox, num_vehiculos: p.num_vehiculos, tiempo_min: p.tiempo_min });
     setEdificios(r.edificios); setBounds(r.bounds);
     setCandidatas(null); setDesplegadas(null);
+    setTimesteps([]); setFrame(null); setPlaying(false);   // limpia la línea de tiempo del escenario anterior (evita 409)
     setKpis({ Junctions: r.n_junctions, Edificios: r.n_edificios });
     setActivo(1);
   });
@@ -265,7 +260,7 @@ export default function App() {
 
             <div className="grouplabel">M3 · Optimización</div>
             <Slider label="Saltos H" value={p.H} min={1} max={6} onChange={set("H")} />
-            <button className="cta ok" disabled={!!busy} onClick={optimizar}>◉ Optimizar despliegue</button>
+            <button className="cta ok" disabled={!!busy || timesteps.length === 0} onClick={optimizar}>◉ Optimizar despliegue</button>
           </div>
         </div>
       </div>
