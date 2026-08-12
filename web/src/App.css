@@ -85,6 +85,8 @@
 .cta.ok { background: var(--ok); border-color: var(--ok); }
 .cta.ok:hover:not(:disabled) { filter: brightness(0.94); }
 .cta:disabled { opacity: 0.5; cursor: not-allowed; }
+.chk { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); margin: 10px 0 2px; cursor: pointer; }
+.chk input { accent-color: var(--accent); }
 
 /* ---------- results ---------- */
 .section-h { display: flex; align-items: center; gap: 12px; margin: 24px 0 13px; }
@@ -130,6 +132,11 @@
 .rtabs button.on { color: var(--accent); background: var(--accent-wash); border-color: var(--line); }
 .rt-t { margin-left: auto; font-size: 11px; color: var(--faint); }
 
+.filterbar { display: flex; align-items: center; gap: 12px; padding: 10px 14px 2px; }
+.tsearch { flex: 1; max-width: 320px; font-size: 12.5px; padding: 6px 10px; border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm); background: var(--surface); color: var(--ink); }
+.tsearch::placeholder { color: var(--faint); }
+.filterbar .matnote { padding: 0; }
 .tablewrap { max-height: 360px; overflow: auto; padding: 4px 14px 12px; }
 .dtable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .dtable th { position: sticky; top: 0; background: var(--surface); text-align: left; color: var(--faint);

@@ -30,8 +30,8 @@ rehidrata (muestra edificios y permite optimizar directamente).
 ```bash
 npm run build      # genera web/dist/ (estático)
 ```
-En producción, el `dist/` se sirve como estático y la API corre aparte (o se
-sirve el `dist/` desde la propia FastAPI). Ver `../DESPLIEGUE.md`.
+El `dist/` es estático y la API corre aparte. (El empaquetado/despliegue se hará
+más adelante.)
 
 ## Estructura y responsabilidades
 
@@ -70,5 +70,5 @@ web/src/
 - [x] Tablas de tuplas V2I/V2V · matrices A/B · multisalto (resumen + visor Rₕ/Sₕ/D_H)
 - [x] Flujo completo verificado end-to-end con SUMO real (generar→filtrar→simular→optimizar)
 - [x] `output/` de demo consistente (una sola corrida)
-- [ ] Deploy combinado (servir `web/dist` desde FastAPI) — ver `../DESPLIEGUE.md`
-- [ ] Extras opcionales: filtros en las tablas de tuplas, círculos de cobertura de RSU
+- [x] Filtros en las tablas de tuplas · círculos de cobertura de RSU · botón "Nuevo escenario"
+- [ ] Empaquetado/despliegue (más adelante)

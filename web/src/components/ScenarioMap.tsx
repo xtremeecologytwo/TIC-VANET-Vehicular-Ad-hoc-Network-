@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  MapContainer, TileLayer, GeoJSON, CircleMarker, Polyline, Rectangle,
+  MapContainer, TileLayer, GeoJSON, CircleMarker, Circle, Polyline, Rectangle,
   useMap, useMapEvents,
 } from "react-leaflet";
 import L from "leaflet";
@@ -64,13 +64,17 @@ export interface MapProps {
   frame?: ConnFrame | null;
   drawing?: boolean;
   bbox?: BBox | null;
+  cobertura?: number;   // radio de cobertura en metros (0 = no dibujar)
   onBbox?: (b: BBox) => void;
 }
 
 export default function ScenarioMap({
-  edificios, candidatas, desplegadas, bounds, frame, drawing, bbox, onBbox,
+  edificios, candidatas, desplegadas, bounds, frame, drawing, bbox, cobertura, onBbox,
 }: MapProps) {
   const desplegadasIds = useMemo(() => new Set((desplegadas ?? []).map((r) => r.id)), [desplegadas]);
+  // Cobertura: si hay despliegue óptimo, se dibuja sobre las desplegadas;
+  // si todavía no, sobre las candidatas.
+  const cubiertas = (desplegadas && desplegadas.length ? desplegadas : candidatas) ?? [];
 
   const geojson = useMemo<FeatureCollection | null>(() => {
     if (!edificios || edificios.length === 0) return null;
@@ -100,6 +104,13 @@ export default function ScenarioMap({
           <GeoJSON key={geojson.features.length} data={geojson}
             style={{ color: "#d97b2f", weight: 0.6, fillColor: "#f4a25a", fillOpacity: 0.4 }} />
         )}
+
+        {/* Radio de cobertura de las RSU */}
+        {cobertura && cobertura > 0 && cubiertas.map((r) => (
+          <Circle key={`cov-${r.id}`} center={[r.lat, r.lon]} radius={cobertura}
+            pathOptions={{ color: "#0f9d6b", weight: 1, opacity: 0.5, fillColor: "#0f9d6b",
+              fillOpacity: 0.06, dashArray: "4 4" }} />
+        ))}
 
         {(candidatas ?? [])
           .filter((r) => !desplegadasIds.has(r.id))

@@ -63,6 +63,7 @@ export default function ResultsTabs({ t, H }: { t: number | null; H: number }) {
   const [v2v, setV2v] = useState<{ total: number; tuplas: V2vTuple[] } | null>(null);
   const [mh, setMh] = useState<Multihop | null>(null);
   const [mhMat, setMhMat] = useState("");
+  const [q, setQ] = useState("");   // filtro de texto para las tablas de tuplas
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => { if (tab === "v2i" && !v2i) api.tuplesV2i().then(setV2i).catch((e) => setErr(e.message)); }, [tab, v2i]);
@@ -88,29 +89,49 @@ export default function ResultsTabs({ t, H }: { t: number | null; H: number }) {
 
       {err && <div className="banner err">⚠ {err}</div>}
 
-      {tab === "v2i" && (
-        <div className="tablewrap">
-          <table className="dtable">
-            <thead><tr><th>t (s)</th><th>Vehículo</th><th>RSU</th><th>Dist (m)</th></tr></thead>
-            <tbody>{(v2i?.tuplas ?? []).map((r, i) => (
-              <tr key={i}><td className="mono">{r.t}</td><td>{r.vehiculo}</td><td className="mono">{r.rsu}</td><td className="mono">{r.distancia}</td></tr>
-            ))}</tbody>
-          </table>
-          {v2i && <div className="matnote mono">mostrando {v2i.tuplas.length} de {v2i.total} tuplas</div>}
-        </div>
-      )}
+      {tab === "v2i" && (() => {
+        const ql = q.trim().toLowerCase();
+        const rows = (v2i?.tuplas ?? []).filter((r) => !ql ||
+          r.vehiculo.toLowerCase().includes(ql) || String(r.rsu).toLowerCase().includes(ql) || String(r.t).includes(ql));
+        return (
+          <>
+            <div className="filterbar">
+              <input className="tsearch" placeholder="Filtrar por vehículo, RSU o t…" value={q} onChange={(e) => setQ(e.target.value)} />
+              {v2i && <span className="matnote mono">{rows.length} de {v2i.total} (cargadas {v2i.tuplas.length})</span>}
+            </div>
+            <div className="tablewrap">
+              <table className="dtable">
+                <thead><tr><th>t (s)</th><th>Vehículo</th><th>RSU</th><th>Dist (m)</th></tr></thead>
+                <tbody>{rows.map((r, i) => (
+                  <tr key={i}><td className="mono">{r.t}</td><td>{r.vehiculo}</td><td className="mono">{r.rsu}</td><td className="mono">{r.distancia}</td></tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </>
+        );
+      })()}
 
-      {tab === "v2v" && (
-        <div className="tablewrap">
-          <table className="dtable">
-            <thead><tr><th>t (s)</th><th>Vehículo i</th><th>Vehículo j</th><th>Dist (m)</th></tr></thead>
-            <tbody>{(v2v?.tuplas ?? []).map((r, i) => (
-              <tr key={i}><td className="mono">{r.t}</td><td>{r.vehiculo_i}</td><td>{r.vehiculo_j}</td><td className="mono">{r.distancia}</td></tr>
-            ))}</tbody>
-          </table>
-          {v2v && <div className="matnote mono">mostrando {v2v.tuplas.length} de {v2v.total} tuplas</div>}
-        </div>
-      )}
+      {tab === "v2v" && (() => {
+        const ql = q.trim().toLowerCase();
+        const rows = (v2v?.tuplas ?? []).filter((r) => !ql ||
+          r.vehiculo_i.toLowerCase().includes(ql) || r.vehiculo_j.toLowerCase().includes(ql) || String(r.t).includes(ql));
+        return (
+          <>
+            <div className="filterbar">
+              <input className="tsearch" placeholder="Filtrar por vehículo o t…" value={q} onChange={(e) => setQ(e.target.value)} />
+              {v2v && <span className="matnote mono">{rows.length} de {v2v.total} (cargadas {v2v.tuplas.length})</span>}
+            </div>
+            <div className="tablewrap">
+              <table className="dtable">
+                <thead><tr><th>t (s)</th><th>Vehículo i</th><th>Vehículo j</th><th>Dist (m)</th></tr></thead>
+                <tbody>{rows.map((r, i) => (
+                  <tr key={i}><td className="mono">{r.t}</td><td>{r.vehiculo_i}</td><td>{r.vehiculo_j}</td><td className="mono">{r.distancia}</td></tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </>
+        );
+      })()}
 
       {tab === "mat" && (mh ? (
         mh.vehiculos.length === 0 ? <div className="empty mono">Sin vehículos activos en t={t}s.</div> : (

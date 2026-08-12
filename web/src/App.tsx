@@ -72,6 +72,8 @@ export default function App() {
   const [frame, setFrame] = useState<ConnFrame | null>(null);
   const [playing, setPlaying] = useState(false);
   const [drawing, setDrawing] = useState(false);
+  const [coberturaOn, setCoberturaOn] = useState(false);
+  const [coberturaR, setCoberturaR] = useState(200);
 
   const set = (k: keyof typeof DEF) => (v: number) => setP((s) => ({ ...s, [k]: v }));
 
@@ -155,6 +157,14 @@ export default function App() {
     setActivo(3);
   });
 
+  // Reinicia el frontend para empezar un escenario nuevo (el próximo "Generar"
+  // sobreescribe el del backend). No borra output/ hasta regenerar.
+  const nuevoEscenario = () => {
+    setBbox(null); setEdificios(null); setCandidatas(null); setDesplegadas(null);
+    setBounds(null); setFrame(null); setTimesteps([]); setKpis({});
+    setActivo(1); setPlaying(false); setError(null); setDrawing(true);
+  };
+
   const kpiEntries = Object.entries(kpis);
 
   return (
@@ -166,7 +176,10 @@ export default function App() {
           <h1>SmartCityNet</h1><span className="div">·</span>
           <span className="who">Consola de simulación y optimización VANET</span>
         </div>
-        <span className="tag mono">EPN · TIC 2026</span>
+        <div className="hd-right">
+          <button className="chip-btn" onClick={nuevoEscenario} disabled={!!busy}>↺ Nuevo escenario</button>
+          <span className="tag mono">EPN · TIC 2026</span>
+        </div>
       </header>
 
       <section className="hero">
@@ -206,7 +219,7 @@ export default function App() {
           <div className="panel-bd map-bd">
             <ScenarioMap edificios={edificios} candidatas={candidatas}
               desplegadas={desplegadas} bounds={bounds} frame={frame}
-              drawing={drawing} bbox={bbox}
+              drawing={drawing} bbox={bbox} cobertura={coberturaOn ? coberturaR : 0}
               onBbox={(b) => { setBbox(b); setDrawing(false); }} />
           </div>
           {timesteps.length > 0 && (
@@ -237,6 +250,13 @@ export default function App() {
             <Slider label="Grado mínimo" value={p.min_grado} min={2} max={8} onChange={set("min_grado")} />
             <Slider label="Radio clúster" value={p.radio_cluster} min={0} max={100} step={5} unit=" m" onChange={set("radio_cluster")} />
             <button className="cta ghost" disabled={!!busy || !edificios} onClick={filtrar}>Filtrar RSU</button>
+            <label className="chk">
+              <input type="checkbox" checked={coberturaOn} onChange={(e) => setCoberturaOn(e.target.checked)} />
+              Mostrar cobertura de RSU
+            </label>
+            {coberturaOn && (
+              <Slider label="Radio cobertura" value={coberturaR} min={50} max={500} step={25} unit=" m" onChange={setCoberturaR} />
+            )}
 
             <div className="grouplabel">M2 · Conectividad</div>
             <Slider label="Radio OBU" value={p.radio_obu} min={50} max={500} step={25} unit=" m" onChange={set("radio_obu")} />
