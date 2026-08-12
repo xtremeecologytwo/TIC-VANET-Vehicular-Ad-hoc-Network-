@@ -1,12 +1,25 @@
 """
 Módulo de Descarga de Datos OSM
 ===============================
-Descarga el archivo .osm desde la API de OpenStreetMap
-usando las coordenadas del Bounding Box seleccionado por el usuario.
+Descarga el archivo .osm de un Bounding Box usando la **Overpass API**.
+
+Antes se usaba la API principal de OpenStreetMap (`/api/0.6/map`), pero esa
+rechaza con HTTP 400 cualquier área con más de ~50 000 nodos (el centro de una
+ciudad los supera enseguida). Overpass permite áreas mucho más grandes; sus
+límites son de tiempo/memoria del servidor, no un tope duro de nodos.
 """
 
 import os
 import requests
+
+# Endpoint público de Overpass (bbox en orden S,W,N,E).
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# Overpass (su CDN) rechaza con 406 el User-Agent por defecto de requests; hay que
+# enviar uno propio identificando la app.
+HEADERS = {"User-Agent": "SmartCityNet-VANET/1.0 (TIC EPN; academic use)"}
+# Tope de seguridad del área (grados²). Overpass aguanta bastante, pero áreas
+# enormes hacen que SUMO (netconvert) tarde muchísimo; este límite evita abusos.
+MAX_AREA_DEG2 = 1.5
 
 
 def validar_coordenadas(min_lon: float, min_lat: float, max_lon: float, max_lat: float) -> tuple[bool, str]:
@@ -27,11 +40,12 @@ def validar_coordenadas(min_lon: float, min_lat: float, max_lon: float, max_lat:
         return False, f"min_lon ({min_lon}) debe ser menor que max_lon ({max_lon})"
     if min_lat >= max_lat:
         return False, f"min_lat ({min_lat}) debe ser menor que max_lat ({max_lat})"
-    # Validar que el área no sea demasiado grande (OSM API limita a ~50,000 nodos)
+    # Tope de seguridad (Overpass aguanta grande, pero SUMO tarda mucho en áreas enormes)
     area = (max_lon - min_lon) * (max_lat - min_lat)
-    if area > 0.25:
-        return False, f"El área seleccionada es muy grande ({area:.4f}°²). Selecciona un área más pequeña (máx ~0.25°²)."
-    
+    if area > MAX_AREA_DEG2:
+        return False, (f"El área seleccionada es muy grande ({area:.3f}°²). "
+                       f"Selecciona un área más pequeña (máx ~{MAX_AREA_DEG2}°²).")
+
     return True, ""
 
 
@@ -56,29 +70,41 @@ def descargar_mapa_osm(min_lon: float, min_lat: float, max_lon: float, max_lat: 
     # Crear directorio de salida si no existe
     os.makedirs(output_dir, exist_ok=True)
     filepath = os.path.join(output_dir, "map.osm")
-    
-    # URL de la API de OpenStreetMap (formato bbox=left,bottom,right,top)
-    url = f"https://api.openstreetmap.org/api/0.6/map?bbox={min_lon},{min_lat},{max_lon},{max_lat}"
-    
+
+    # Consulta Overpass: nodos + vías + relaciones del bbox (S,W,N,E). El `>;`
+    # recupera los nodos que definen la geometría de las vías, de modo que el
+    # .osm resultante es completo y lo consumen netconvert/polyconvert.
+    query = (
+        "[out:xml][timeout:180];"
+        f"(node({min_lat},{min_lon},{max_lat},{max_lon});"
+        f"way({min_lat},{min_lon},{max_lat},{max_lon});"
+        f"relation({min_lat},{min_lon},{max_lat},{max_lon}););"
+        "out body;>;out skel qt;"
+    )
+
     try:
-        respuesta = requests.get(url, timeout=120)
-        
+        respuesta = requests.post(OVERPASS_URL, data={"data": query}, headers=HEADERS, timeout=300)
+
         if respuesta.status_code == 200:
+            contenido = respuesta.content
+            # Overpass a veces responde 200 con un <remark> de error (timeout/exceso).
+            if b"<remark>" in contenido and (b"runtime error" in contenido or b"timed out" in contenido.lower()):
+                return None, ("Overpass no pudo procesar el área (demasiado grande o servidor "
+                              "ocupado). Prueba un área menor o reintenta en unos segundos.")
             with open(filepath, "wb") as f:
-                f.write(respuesta.content)
-            # Verificar que el archivo no esté vacío
-            if os.path.getsize(filepath) < 100:
-                return None, "El archivo descargado está vacío. El área puede no contener datos."
+                f.write(contenido)
+            if os.path.getsize(filepath) < 200:
+                return None, "El área descargada está casi vacía (puede no contener calles)."
             return filepath, None
-        elif respuesta.status_code == 400:
-            return None, "Solicitud inválida (400). Verifica que las coordenadas sean correctas y el área no sea demasiado extensa."
-        elif respuesta.status_code == 509:
-            return None, "Demasiadas solicitudes (509). Espera unos segundos e intenta de nuevo."
+        elif respuesta.status_code == 429:
+            return None, "Overpass: demasiadas solicitudes (429). Espera unos segundos e intenta de nuevo."
+        elif respuesta.status_code in (504, 508):
+            return None, "Overpass: tiempo/recursos agotados. El área es muy grande; redúcela e intenta de nuevo."
         else:
-            return None, f"Error HTTP {respuesta.status_code}: {respuesta.text[:200]}"
-            
+            return None, f"Error HTTP {respuesta.status_code} de Overpass: {respuesta.text[:200]}"
+
     except requests.exceptions.Timeout:
-        return None, "La solicitud excedió el tiempo de espera (120s). Intenta con un área más pequeña."
+        return None, "La descarga excedió el tiempo de espera (300s). Reduce el tamaño del área."
     except requests.exceptions.ConnectionError:
         return None, "Error de conexión. Verifica tu acceso a internet."
     except requests.exceptions.RequestException as e:

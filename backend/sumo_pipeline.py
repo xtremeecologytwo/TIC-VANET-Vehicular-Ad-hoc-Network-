@@ -66,7 +66,7 @@ def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output",
     try:
         resultado = subprocess.run(
             cmd_netconvert, check=True,
-            capture_output=True, text=True, timeout=120
+            capture_output=True, text=True, timeout=300
         )
         resultados.append({
             "paso": "netconvert",
@@ -107,7 +107,7 @@ def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output",
     try:
         subprocess.run(
             cmd_polyconvert, check=True,
-            capture_output=True, text=True, timeout=120
+            capture_output=True, text=True, timeout=300
         )
         resultados.append({
             "paso": "polyconvert",
