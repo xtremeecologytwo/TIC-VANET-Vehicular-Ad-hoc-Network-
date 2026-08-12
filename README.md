@@ -90,20 +90,33 @@ TIC-VANET/
 CPLEX), **Node 18+**, y **SUMO** con `netconvert`/`polyconvert` en el `PATH` y
 `SUMO_HOME` configurado.
 
-La app son **dos procesos**: la API (Python) y el frontend (React).
+La app son **dos procesos** que deben estar encendidos a la vez: la **API**
+(Python/FastAPI, hace la ciencia) y el **frontend** (React, la interfaz). El
+frontend habla con la API; por eso necesitas ambos.
 
+**Primera vez (instalar dependencias):**
 ```bash
-# 1) API — desde la raíz del repo
 python -m venv .venv
 .venv\Scripts\activate                 # Windows  (Linux/Mac: source .venv/bin/activate)
-pip install -r requirements.txt
+pip install -r requirements.txt        # dependencias del backend/API
+cd web && npm install && cd ..         # dependencias del frontend
+```
+
+**Cada vez que quieras usar la app** — abre **dos terminales**:
+```bash
+# Terminal 1 — backend (API en http://localhost:8000)
 uvicorn api.main:app --reload --port 8000
 
-# 2) Frontend — desde web/
+# Terminal 2 — frontend (app en http://localhost:5173)
 cd web
-npm install                            # sólo la primera vez
-npm run dev                            # abre http://localhost:5173
+npm run dev
 ```
+Luego abre **http://localhost:5173** en el navegador. (`uvicorn api.main:app`
+significa: correr el objeto `app` definido en `api/main.py`.)
+
+**Atajo (Windows):** en vez de las dos terminales, ejecuta **`.\dev.ps1`** en la
+raíz del repo (clic derecho → *Ejecutar con PowerShell*). Abre las dos ventanas
+solo (la API y el frontend) y te indica las URLs.
 
 En desarrollo, Vite **proxya** `/api` → `http://localhost:8000` (ver
 `web/vite.config.ts`), así que no hay problemas de CORS y el cliente usa rutas
