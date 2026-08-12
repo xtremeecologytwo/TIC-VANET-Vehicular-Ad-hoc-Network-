@@ -11,7 +11,7 @@
     <!-- Duración de la simulación -->
     <time>
         <begin value="0"/>
-        <end value="3660"/>
+        <end value="1200"/>
     </time>
 
     <!-- Salida FCD: posición de cada vehículo. device.fcd.period controla

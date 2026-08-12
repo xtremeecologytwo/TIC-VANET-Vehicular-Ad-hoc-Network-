@@ -149,6 +149,7 @@
 .mat td { width: 13px; height: 13px; border: 1px solid var(--line); background: var(--surface); }
 .mat.accent td.on { background: var(--accent); }
 .mat.ok td.on { background: var(--ok); }
+.mat.warn td.on { background: var(--warn); }
 .mat .corner { background: var(--surface-2); }
 .matnote { font-size: 10.5px; color: var(--faint); padding: 6px 14px; }
 
@@ -156,6 +157,10 @@
 .mh-note { margin: 8px 14px 14px; padding: 9px 12px; border-radius: var(--r-sm); font-size: 12px; }
 .mh-note.ok { background: var(--ok-wash); border: 1px solid rgba(15,157,107,0.28); color: var(--ok); }
 .mh-note.warn { background: #fbf3e3; border: 1px solid rgba(185,119,11,0.3); color: var(--warn); }
+.mh-mat { padding: 4px 14px 14px; }
+.mh-mat-hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.mh-mat-hd select { font-size: 12px; padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--ink); font-family: var(--font-mono); }
 
 /* Leaflet: que los controles no tapen las esquinas del marco */
 .leaflet-top.leaflet-left { margin: 6px; }

@@ -1,141 +1,165 @@
 {
     "parametros": {
-        "radio_obu": 300,
+        "radio_obu": 300.0,
         "bidireccional": true,
-        "total_tuplas_v2v": 38,
-        "total_timesteps": 31,
-        "total_pares_evaluados": 587,
-        "total_pares_en_rango": 96,
+        "total_tuplas_v2v": 86,
+        "total_timesteps": 10,
+        "total_pares_evaluados": 136,
+        "total_pares_en_rango": 72,
         "resumen_por_vehiculo": {
-            "V13": {
+            "V2": {
+                "total_conexiones": 1,
+                "vecinos_unicos": 1
+            },
+            "V7": {
+                "total_conexiones": 3,
+                "vecinos_unicos": 3
+            },
+            "V4": {
+                "total_conexiones": 2,
+                "vecinos_unicos": 2
+            },
+            "V5": {
+                "total_conexiones": 2,
+                "vecinos_unicos": 2
+            },
+            "V12": {
                 "total_conexiones": 1,
                 "vecinos_unicos": 1
             },
             "V8": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
+                "total_conexiones": 2,
+                "vecinos_unicos": 2
             },
-            "V14": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
+            "V13": {
+                "total_conexiones": 5,
+                "vecinos_unicos": 5
             },
             "V16": {
                 "total_conexiones": 1,
                 "vecinos_unicos": 1
             },
-            "V24": {
+            "V21": {
+                "total_conexiones": 4,
+                "vecinos_unicos": 4
+            },
+            "V23": {
+                "total_conexiones": 6,
+                "vecinos_unicos": 6
+            },
+            "V15": {
+                "total_conexiones": 4,
+                "vecinos_unicos": 4
+            },
+            "V18": {
+                "total_conexiones": 5,
+                "vecinos_unicos": 5
+            },
+            "V14": {
                 "total_conexiones": 1,
                 "vecinos_unicos": 1
             },
-            "V26": {
+            "V24": {
+                "total_conexiones": 3,
+                "vecinos_unicos": 3
+            },
+            "V19": {
+                "total_conexiones": 2,
+                "vecinos_unicos": 2
+            },
+            "V25": {
+                "total_conexiones": 2,
+                "vecinos_unicos": 2
+            },
+            "V32": {
                 "total_conexiones": 1,
                 "vecinos_unicos": 1
+            },
+            "V28": {
+                "total_conexiones": 1,
+                "vecinos_unicos": 1
+            },
+            "V31": {
+                "total_conexiones": 3,
+                "vecinos_unicos": 3
+            },
+            "V39": {
+                "total_conexiones": 2,
+                "vecinos_unicos": 2
+            },
+            "V34": {
+                "total_conexiones": 2,
+                "vecinos_unicos": 2
             },
             "V33": {
                 "total_conexiones": 1,
                 "vecinos_unicos": 1
             },
-            "V35": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
-            },
-            "V41": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
-            },
-            "V46": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
-            },
-            "V43": {
+            "V38": {
                 "total_conexiones": 1,
                 "vecinos_unicos": 1
             },
             "V47": {
+                "total_conexiones": 2,
+                "vecinos_unicos": 2
+            },
+            "V45": {
                 "total_conexiones": 1,
                 "vecinos_unicos": 1
+            },
+            "V48": {
+                "total_conexiones": 1,
+                "vecinos_unicos": 1
+            },
+            "V55": {
+                "total_conexiones": 3,
+                "vecinos_unicos": 3
+            },
+            "V51": {
+                "total_conexiones": 2,
+                "vecinos_unicos": 2
             },
             "V52": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
-            },
-            "V56": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
-            },
-            "V73": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
-            },
-            "V76": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
-            },
-            "V79": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
-            },
-            "V82": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
-            },
-            "V103": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
-            },
-            "V108": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
-            },
-            "V112": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
-            },
-            "V113": {
                 "total_conexiones": 2,
                 "vecinos_unicos": 2
             },
-            "V111": {
+            "V54": {
                 "total_conexiones": 1,
                 "vecinos_unicos": 1
             },
-            "V117": {
+            "V58": {
                 "total_conexiones": 1,
                 "vecinos_unicos": 1
             },
-            "V115": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
+            "V60": {
+                "total_conexiones": 3,
+                "vecinos_unicos": 3
             },
-            "V116": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
+            "V61": {
+                "total_conexiones": 3,
+                "vecinos_unicos": 3
             },
-            "V122": {
+            "V63": {
+                "total_conexiones": 3,
+                "vecinos_unicos": 3
+            },
+            "V64": {
                 "total_conexiones": 2,
                 "vecinos_unicos": 2
             },
-            "V119": {
+            "V66": {
+                "total_conexiones": 3,
+                "vecinos_unicos": 3
+            },
+            "V67": {
                 "total_conexiones": 1,
                 "vecinos_unicos": 1
             },
-            "V126": {
+            "V72": {
                 "total_conexiones": 2,
                 "vecinos_unicos": 2
             },
-            "V127": {
-                "total_conexiones": 2,
-                "vecinos_unicos": 2
-            },
-            "V129": {
-                "total_conexiones": 2,
-                "vecinos_unicos": 2
-            },
-            "V132": {
-                "total_conexiones": 1,
-                "vecinos_unicos": 1
-            },
-            "V134": {
+            "V69": {
                 "total_conexiones": 1,
                 "vecinos_unicos": 1
             }
@@ -143,232 +167,520 @@
     },
     "tuplas_v2v": [
         {
+            "t": 120.0,
+            "vehiculo_i": "V2",
+            "vehiculo_j": "V7",
+            "distancia": 272.28
+        },
+        {
+            "t": 120.0,
+            "vehiculo_i": "V7",
+            "vehiculo_j": "V2",
+            "distancia": 272.28
+        },
+        {
+            "t": 120.0,
+            "vehiculo_i": "V4",
+            "vehiculo_j": "V5",
+            "distancia": 158.5
+        },
+        {
+            "t": 120.0,
+            "vehiculo_i": "V5",
+            "vehiculo_j": "V4",
+            "distancia": 158.5
+        },
+        {
+            "t": 120.0,
+            "vehiculo_i": "V4",
+            "vehiculo_j": "V7",
+            "distancia": 169.32
+        },
+        {
+            "t": 120.0,
+            "vehiculo_i": "V7",
+            "vehiculo_j": "V4",
+            "distancia": 169.32
+        },
+        {
+            "t": 120.0,
+            "vehiculo_i": "V5",
+            "vehiculo_j": "V7",
+            "distancia": 89.24
+        },
+        {
+            "t": 120.0,
+            "vehiculo_i": "V7",
+            "vehiculo_j": "V5",
+            "distancia": 89.24
+        },
+        {
+            "t": 240.0,
+            "vehiculo_i": "V12",
+            "vehiculo_j": "V8",
+            "distancia": 274.86
+        },
+        {
+            "t": 240.0,
+            "vehiculo_i": "V8",
+            "vehiculo_j": "V12",
+            "distancia": 274.86
+        },
+        {
+            "t": 240.0,
+            "vehiculo_i": "V13",
+            "vehiculo_j": "V16",
+            "distancia": 4.17
+        },
+        {
+            "t": 240.0,
+            "vehiculo_i": "V16",
+            "vehiculo_j": "V13",
+            "distancia": 4.17
+        },
+        {
             "t": 360.0,
             "vehiculo_i": "V13",
+            "vehiculo_j": "V21",
+            "distancia": 231.96
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V21",
+            "vehiculo_j": "V13",
+            "distancia": 231.96
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V13",
+            "vehiculo_j": "V23",
+            "distancia": 285.6
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V23",
+            "vehiculo_j": "V13",
+            "distancia": 285.6
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V13",
+            "vehiculo_j": "V15",
+            "distancia": 9.09
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V15",
+            "vehiculo_j": "V13",
+            "distancia": 9.09
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V13",
+            "vehiculo_j": "V18",
+            "distancia": 211.97
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V18",
+            "vehiculo_j": "V13",
+            "distancia": 211.97
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V14",
             "vehiculo_j": "V8",
-            "distancia": 210.32
+            "distancia": 226.53
         },
         {
             "t": 360.0,
             "vehiculo_i": "V8",
-            "vehiculo_j": "V13",
-            "distancia": 210.32
-        },
-        {
-            "t": 480.0,
-            "vehiculo_i": "V14",
-            "vehiculo_j": "V16",
-            "distancia": 9.33
-        },
-        {
-            "t": 480.0,
-            "vehiculo_i": "V16",
             "vehiculo_j": "V14",
-            "distancia": 9.33
+            "distancia": 226.53
         },
         {
-            "t": 720.0,
-            "vehiculo_i": "V24",
-            "vehiculo_j": "V26",
-            "distancia": 273.02
+            "t": 360.0,
+            "vehiculo_i": "V15",
+            "vehiculo_j": "V21",
+            "distancia": 232.28
         },
         {
-            "t": 720.0,
-            "vehiculo_i": "V26",
+            "t": 360.0,
+            "vehiculo_i": "V21",
+            "vehiculo_j": "V15",
+            "distancia": 232.28
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V15",
+            "vehiculo_j": "V23",
+            "distancia": 285.84
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V23",
+            "vehiculo_j": "V15",
+            "distancia": 285.84
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V15",
+            "vehiculo_j": "V18",
+            "distancia": 208.08
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V18",
+            "vehiculo_j": "V15",
+            "distancia": 208.08
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V18",
             "vehiculo_j": "V24",
-            "distancia": 273.02
+            "distancia": 245.29
         },
         {
-            "t": 960.0,
-            "vehiculo_i": "V33",
-            "vehiculo_j": "V35",
-            "distancia": 52.36
+            "t": 360.0,
+            "vehiculo_i": "V24",
+            "vehiculo_j": "V18",
+            "distancia": 245.29
         },
         {
-            "t": 960.0,
-            "vehiculo_i": "V35",
+            "t": 360.0,
+            "vehiculo_i": "V18",
+            "vehiculo_j": "V21",
+            "distancia": 106.82
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V21",
+            "vehiculo_j": "V18",
+            "distancia": 106.82
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V18",
+            "vehiculo_j": "V23",
+            "distancia": 136.59
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V23",
+            "vehiculo_j": "V18",
+            "distancia": 136.59
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V19",
+            "vehiculo_j": "V24",
+            "distancia": 128.48
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V24",
+            "vehiculo_j": "V19",
+            "distancia": 128.48
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V19",
+            "vehiculo_j": "V23",
+            "distancia": 236.28
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V23",
+            "vehiculo_j": "V19",
+            "distancia": 236.28
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V21",
+            "vehiculo_j": "V23",
+            "distancia": 53.67
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V23",
+            "vehiculo_j": "V21",
+            "distancia": 53.67
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V23",
+            "vehiculo_j": "V24",
+            "distancia": 108.75
+        },
+        {
+            "t": 360.0,
+            "vehiculo_i": "V24",
+            "vehiculo_j": "V23",
+            "distancia": 108.75
+        },
+        {
+            "t": 480.0,
+            "vehiculo_i": "V25",
+            "vehiculo_j": "V32",
+            "distancia": 296.13
+        },
+        {
+            "t": 480.0,
+            "vehiculo_i": "V32",
+            "vehiculo_j": "V25",
+            "distancia": 296.13
+        },
+        {
+            "t": 480.0,
+            "vehiculo_i": "V25",
+            "vehiculo_j": "V28",
+            "distancia": 252.71
+        },
+        {
+            "t": 480.0,
+            "vehiculo_i": "V28",
+            "vehiculo_j": "V25",
+            "distancia": 252.71
+        },
+        {
+            "t": 600.0,
+            "vehiculo_i": "V31",
+            "vehiculo_j": "V39",
+            "distancia": 217.31
+        },
+        {
+            "t": 600.0,
+            "vehiculo_i": "V39",
+            "vehiculo_j": "V31",
+            "distancia": 217.31
+        },
+        {
+            "t": 600.0,
+            "vehiculo_i": "V31",
+            "vehiculo_j": "V34",
+            "distancia": 115.74
+        },
+        {
+            "t": 600.0,
+            "vehiculo_i": "V34",
+            "vehiculo_j": "V31",
+            "distancia": 115.74
+        },
+        {
+            "t": 600.0,
+            "vehiculo_i": "V31",
             "vehiculo_j": "V33",
-            "distancia": 52.36
+            "distancia": 295.07
         },
         {
-            "t": 1200.0,
-            "vehiculo_i": "V41",
-            "vehiculo_j": "V46",
-            "distancia": 101.42
+            "t": 600.0,
+            "vehiculo_i": "V33",
+            "vehiculo_j": "V31",
+            "distancia": 295.07
         },
         {
-            "t": 1200.0,
-            "vehiculo_i": "V46",
-            "vehiculo_j": "V41",
-            "distancia": 101.42
+            "t": 600.0,
+            "vehiculo_i": "V34",
+            "vehiculo_j": "V39",
+            "distancia": 106.1
         },
         {
-            "t": 1200.0,
-            "vehiculo_i": "V43",
+            "t": 600.0,
+            "vehiculo_i": "V39",
+            "vehiculo_j": "V34",
+            "distancia": 106.1
+        },
+        {
+            "t": 720.0,
+            "vehiculo_i": "V38",
             "vehiculo_j": "V47",
-            "distancia": 106.16
+            "distancia": 274.56
         },
         {
-            "t": 1200.0,
+            "t": 720.0,
             "vehiculo_i": "V47",
-            "vehiculo_j": "V43",
-            "distancia": 106.16
+            "vehiculo_j": "V38",
+            "distancia": 274.56
         },
         {
-            "t": 1440.0,
-            "vehiculo_i": "V52",
-            "vehiculo_j": "V56",
-            "distancia": 83.48
+            "t": 720.0,
+            "vehiculo_i": "V45",
+            "vehiculo_j": "V48",
+            "distancia": 248.66
         },
         {
-            "t": 1440.0,
-            "vehiculo_i": "V56",
+            "t": 720.0,
+            "vehiculo_i": "V48",
+            "vehiculo_j": "V45",
+            "distancia": 248.66
+        },
+        {
+            "t": 840.0,
+            "vehiculo_i": "V47",
+            "vehiculo_j": "V55",
+            "distancia": 213.56
+        },
+        {
+            "t": 840.0,
+            "vehiculo_i": "V55",
+            "vehiculo_j": "V47",
+            "distancia": 213.56
+        },
+        {
+            "t": 840.0,
+            "vehiculo_i": "V51",
             "vehiculo_j": "V52",
-            "distancia": 83.48
+            "distancia": 72.32
         },
         {
-            "t": 1920.0,
-            "vehiculo_i": "V73",
-            "vehiculo_j": "V76",
-            "distancia": 168.87
+            "t": 840.0,
+            "vehiculo_i": "V52",
+            "vehiculo_j": "V51",
+            "distancia": 72.32
         },
         {
-            "t": 1920.0,
-            "vehiculo_i": "V76",
-            "vehiculo_j": "V73",
-            "distancia": 168.87
+            "t": 840.0,
+            "vehiculo_i": "V51",
+            "vehiculo_j": "V55",
+            "distancia": 230.28
         },
         {
-            "t": 2040.0,
-            "vehiculo_i": "V79",
-            "vehiculo_j": "V82",
-            "distancia": 166.03
+            "t": 840.0,
+            "vehiculo_i": "V55",
+            "vehiculo_j": "V51",
+            "distancia": 230.28
         },
         {
-            "t": 2040.0,
-            "vehiculo_i": "V82",
-            "vehiculo_j": "V79",
-            "distancia": 166.03
+            "t": 840.0,
+            "vehiculo_i": "V52",
+            "vehiculo_j": "V55",
+            "distancia": 158.08
         },
         {
-            "t": 2640.0,
-            "vehiculo_i": "V103",
-            "vehiculo_j": "V108",
-            "distancia": 23.56
+            "t": 840.0,
+            "vehiculo_i": "V55",
+            "vehiculo_j": "V52",
+            "distancia": 158.08
         },
         {
-            "t": 2640.0,
-            "vehiculo_i": "V108",
-            "vehiculo_j": "V103",
-            "distancia": 23.56
+            "t": 960.0,
+            "vehiculo_i": "V54",
+            "vehiculo_j": "V58",
+            "distancia": 72.26
         },
         {
-            "t": 2760.0,
-            "vehiculo_i": "V112",
-            "vehiculo_j": "V113",
-            "distancia": 128.35
+            "t": 960.0,
+            "vehiculo_i": "V58",
+            "vehiculo_j": "V54",
+            "distancia": 72.26
         },
         {
-            "t": 2760.0,
-            "vehiculo_i": "V113",
-            "vehiculo_j": "V112",
-            "distancia": 128.35
+            "t": 960.0,
+            "vehiculo_i": "V60",
+            "vehiculo_j": "V61",
+            "distancia": 242.51
         },
         {
-            "t": 2880.0,
-            "vehiculo_i": "V111",
-            "vehiculo_j": "V117",
-            "distancia": 99.52
+            "t": 960.0,
+            "vehiculo_i": "V61",
+            "vehiculo_j": "V60",
+            "distancia": 242.51
         },
         {
-            "t": 2880.0,
-            "vehiculo_i": "V117",
-            "vehiculo_j": "V111",
-            "distancia": 99.52
+            "t": 960.0,
+            "vehiculo_i": "V60",
+            "vehiculo_j": "V63",
+            "distancia": 156.95
         },
         {
-            "t": 2880.0,
-            "vehiculo_i": "V113",
-            "vehiculo_j": "V115",
-            "distancia": 139.29
+            "t": 960.0,
+            "vehiculo_i": "V63",
+            "vehiculo_j": "V60",
+            "distancia": 156.95
         },
         {
-            "t": 2880.0,
-            "vehiculo_i": "V115",
-            "vehiculo_j": "V113",
-            "distancia": 139.29
+            "t": 960.0,
+            "vehiculo_i": "V61",
+            "vehiculo_j": "V63",
+            "distancia": 117.09
         },
         {
-            "t": 3000.0,
-            "vehiculo_i": "V116",
-            "vehiculo_j": "V122",
-            "distancia": 8.17
+            "t": 960.0,
+            "vehiculo_i": "V63",
+            "vehiculo_j": "V61",
+            "distancia": 117.09
         },
         {
-            "t": 3000.0,
-            "vehiculo_i": "V122",
-            "vehiculo_j": "V116",
-            "distancia": 8.17
+            "t": 960.0,
+            "vehiculo_i": "V61",
+            "vehiculo_j": "V64",
+            "distancia": 222.69
         },
         {
-            "t": 3000.0,
-            "vehiculo_i": "V119",
-            "vehiculo_j": "V122",
-            "distancia": 186.82
+            "t": 960.0,
+            "vehiculo_i": "V64",
+            "vehiculo_j": "V61",
+            "distancia": 222.69
         },
         {
-            "t": 3000.0,
-            "vehiculo_i": "V122",
-            "vehiculo_j": "V119",
-            "distancia": 186.82
+            "t": 960.0,
+            "vehiculo_i": "V63",
+            "vehiculo_j": "V64",
+            "distancia": 108.35
         },
         {
-            "t": 3240.0,
-            "vehiculo_i": "V126",
-            "vehiculo_j": "V127",
-            "distancia": 108.59
+            "t": 960.0,
+            "vehiculo_i": "V64",
+            "vehiculo_j": "V63",
+            "distancia": 108.35
         },
         {
-            "t": 3240.0,
-            "vehiculo_i": "V127",
-            "vehiculo_j": "V126",
-            "distancia": 108.59
+            "t": 1080.0,
+            "vehiculo_i": "V60",
+            "vehiculo_j": "V66",
+            "distancia": 166.08
         },
         {
-            "t": 3240.0,
-            "vehiculo_i": "V126",
-            "vehiculo_j": "V129",
-            "distancia": 17.55
+            "t": 1080.0,
+            "vehiculo_i": "V66",
+            "vehiculo_j": "V60",
+            "distancia": 166.08
         },
         {
-            "t": 3240.0,
-            "vehiculo_i": "V129",
-            "vehiculo_j": "V126",
-            "distancia": 17.55
+            "t": 1080.0,
+            "vehiculo_i": "V66",
+            "vehiculo_j": "V67",
+            "distancia": 299.7
         },
         {
-            "t": 3240.0,
-            "vehiculo_i": "V127",
-            "vehiculo_j": "V129",
-            "distancia": 126.12
+            "t": 1080.0,
+            "vehiculo_i": "V67",
+            "vehiculo_j": "V66",
+            "distancia": 299.7
         },
         {
-            "t": 3240.0,
-            "vehiculo_i": "V129",
-            "vehiculo_j": "V127",
-            "distancia": 126.12
+            "t": 1080.0,
+            "vehiculo_i": "V66",
+            "vehiculo_j": "V72",
+            "distancia": 133.36
         },
         {
-            "t": 3360.0,
-            "vehiculo_i": "V132",
-            "vehiculo_j": "V134",
-            "distancia": 10.04
+            "t": 1080.0,
+            "vehiculo_i": "V72",
+            "vehiculo_j": "V66",
+            "distancia": 133.36
         },
         {
-            "t": 3360.0,
-            "vehiculo_i": "V134",
-            "vehiculo_j": "V132",
-            "distancia": 10.04
+            "t": 1080.0,
+            "vehiculo_i": "V69",
+            "vehiculo_j": "V72",
+            "distancia": 224.65
+        },
+        {
+            "t": 1080.0,
+            "vehiculo_i": "V72",
+            "vehiculo_j": "V69",
+            "distancia": 224.65
         }
     ],
     "matrices": {
@@ -384,11 +696,12 @@
         },
         "120.0": {
             "vehiculos": [
-                "V0",
-                "V1",
                 "V2",
-                "V3",
-                "V4"
+                "V4",
+                "V5",
+                "V6",
+                "V7",
+                "V8"
             ],
             "A": [
                 [
@@ -396,6 +709,23 @@
                     0,
                     0,
                     0,
+                    1,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    1,
+                    0,
+                    1,
+                    0
+                ],
+                [
+                    0,
+                    1,
+                    0,
+                    0,
+                    1,
                     0
                 ],
                 [
@@ -403,23 +733,19 @@
                     0,
                     0,
                     0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
                     0,
                     0
                 ],
                 [
-                    0,
-                    0,
+                    1,
+                    1,
+                    1,
                     0,
                     0,
                     0
                 ],
                 [
+                    0,
                     0,
                     0,
                     0,
@@ -430,90 +756,14 @@
         },
         "240.0": {
             "vehiculos": [
-                "V3",
-                "V4",
-                "V5",
-                "V6",
-                "V8",
-                "V9"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "360.0": {
-            "vehiculos": [
-                "V11",
                 "V12",
                 "V13",
                 "V14",
-                "V4",
+                "V15",
+                "V16",
                 "V8"
             ],
             "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
                 [
                     0,
                     0,
@@ -527,6 +777,14 @@
                     0,
                     0,
                     0,
+                    1,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
                     0,
                     0
                 ],
@@ -538,10 +796,178 @@
                     0,
                     0
                 ],
+                [
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ]
+            ]
+        },
+        "360.0": {
+            "vehiculos": [
+                "V13",
+                "V14",
+                "V15",
+                "V18",
+                "V19",
+                "V20",
+                "V21",
+                "V22",
+                "V23",
+                "V24",
+                "V8"
+            ],
+            "A": [
                 [
                     0,
                     0,
                     1,
+                    1,
+                    0,
+                    0,
+                    1,
+                    0,
+                    1,
+                    0,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                [
+                    1,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1,
+                    0,
+                    1,
+                    0,
+                    0
+                ],
+                [
+                    1,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    1,
+                    1,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    1,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    1,
+                    0,
+                    1,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    1,
+                    0,
+                    1,
+                    1,
+                    1,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    1,
+                    1,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0
+                ],
+                [
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
                     0,
                     0,
                     0
@@ -550,30 +976,86 @@
         },
         "480.0": {
             "vehiculos": [
-                "V14",
-                "V16",
-                "V18",
-                "V19",
-                "V8"
+                "V21",
+                "V22",
+                "V23",
+                "V25",
+                "V26",
+                "V28",
+                "V29",
+                "V30",
+                "V31",
+                "V32"
             ],
             "A": [
                 [
                     0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
                     1,
                     0,
                     0,
+                    0,
+                    1
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
                     0
                 ],
                 [
+                    0,
+                    0,
+                    0,
                     1,
                     0,
                     0,
                     0,
-                    0
-                ],
-                [
-                    0,
-                    0,
                     0,
                     0,
                     0
@@ -583,9 +1065,43 @@
                     0,
                     0,
                     0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
                     0
                 ],
                 [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
                     0,
                     0,
                     0,
@@ -596,17 +1112,49 @@
         },
         "600.0": {
             "vehiculos": [
-                "V14",
-                "V19",
-                "V20",
-                "V21",
-                "V22",
-                "V23",
-                "V24"
+                "V31",
+                "V33",
+                "V34",
+                "V36",
+                "V37",
+                "V38",
+                "V39",
+                "V40"
             ],
             "A": [
                 [
                     0,
+                    1,
+                    1,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0
+                ],
+                [
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0
+                ],
+                [
+                    0,
+                    0,
                     0,
                     0,
                     0,
@@ -621,14 +1169,6 @@
                     0,
                     0,
                     0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
                     0,
                     0
                 ],
@@ -639,20 +1179,13 @@
                     0,
                     0,
                     0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
                     0,
                     0
                 ],
                 [
+                    1,
                     0,
-                    0,
+                    1,
                     0,
                     0,
                     0,
@@ -660,6 +1193,7 @@
                     0
                 ],
                 [
+                    0,
                     0,
                     0,
                     0,
@@ -672,15 +1206,14 @@
         },
         "720.0": {
             "vehiculos": [
-                "V20",
-                "V21",
-                "V23",
-                "V24",
-                "V25",
-                "V26",
-                "V27",
-                "V28",
-                "V29"
+                "V36",
+                "V38",
+                "V43",
+                "V44",
+                "V45",
+                "V46",
+                "V47",
+                "V48"
             ],
             "A": [
                 [
@@ -691,38 +1224,24 @@
                     0,
                     0,
                     0,
-                    0,
                     0
                 ],
                 [
                     0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
                     0,
                     0,
                     0,
                     0,
                     0,
                     1,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
                     0,
                     0,
                     0
@@ -735,28 +1254,35 @@
                     0,
                     0,
                     0,
-                    0,
                     0
                 ],
                 [
                     0,
                     0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                [
                     0,
                     1,
                     0,
                     0,
                     0,
                     0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
                     0,
                     0
                 ],
@@ -765,19 +1291,7 @@
                     0,
                     0,
                     0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
+                    1,
                     0,
                     0,
                     0
@@ -786,12 +1300,14 @@
         },
         "840.0": {
             "vehiculos": [
-                "V26",
-                "V28",
-                "V31",
-                "V32",
-                "V33",
-                "V34"
+                "V47",
+                "V48",
+                "V50",
+                "V51",
+                "V52",
+                "V54",
+                "V55",
+                "V56"
             ],
             "A": [
                 [
@@ -800,25 +1316,13 @@
                     0,
                     0,
                     0,
+                    0,
+                    1,
                     0
                 ],
                 [
                     0,
                     0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
                     0,
                     0,
                     0,
@@ -832,9 +1336,53 @@
                     0,
                     0,
                     0,
+                    0,
+                    0,
                     0
                 ],
                 [
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    1,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    1,
+                    0,
+                    0,
+                    1,
+                    1,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    0,
+                    0,
                     0,
                     0,
                     0,
@@ -846,33 +1394,61 @@
         },
         "960.0": {
             "vehiculos": [
-                "V33",
-                "V35",
-                "V36",
-                "V37",
-                "V38",
-                "V39"
+                "V47",
+                "V54",
+                "V56",
+                "V58",
+                "V59",
+                "V60",
+                "V61",
+                "V62",
+                "V63",
+                "V64"
             ],
             "A": [
                 [
                     0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
                     1,
                     0,
                     0,
                     0,
+                    0,
+                    0,
                     0
                 ],
                 [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    0,
                     1,
                     0,
                     0,
                     0,
                     0,
-                    0
-                ],
-                [
-                    0,
-                    0,
                     0,
                     0,
                     0,
@@ -883,10 +1459,6 @@
                     0,
                     0,
                     0,
-                    0,
-                    0
-                ],
-                [
                     0,
                     0,
                     0,
@@ -900,645 +1472,77 @@
                     0,
                     0,
                     0,
+                    0,
+                    1,
+                    0,
+                    1,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1,
+                    1
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    1,
+                    0,
+                    0,
+                    1
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    1,
                     0
                 ]
             ]
         },
         "1080.0": {
             "vehiculos": [
-                "V37",
-                "V38",
-                "V39",
-                "V41",
-                "V42",
-                "V43",
-                "V44"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "1200.0": {
-            "vehiculos": [
-                "V41",
-                "V43",
-                "V44",
-                "V45",
-                "V46",
-                "V47",
-                "V48",
-                "V49"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    1,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    1,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    1,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    1,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "1320.0": {
-            "vehiculos": [
-                "V45",
-                "V46",
-                "V47",
-                "V49",
-                "V51",
-                "V52",
-                "V53",
-                "V54"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "1440.0": {
-            "vehiculos": [
-                "V51",
-                "V52",
-                "V53",
-                "V54",
-                "V55",
-                "V56",
-                "V57",
-                "V58",
-                "V59"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    1,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    1,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "1560.0": {
-            "vehiculos": [
-                "V57",
-                "V58",
-                "V59",
                 "V60",
-                "V61",
-                "V62",
-                "V63"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "1680.0": {
-            "vehiculos": [
-                "V62",
-                "V63",
-                "V64",
                 "V66",
                 "V67",
-                "V68"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "1800.0": {
-            "vehiculos": [
-                "V64",
-                "V66",
-                "V67",
+                "V68",
                 "V69",
                 "V70",
                 "V71",
-                "V72",
-                "V73"
+                "V72"
             ],
             "A": [
                 [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "1920.0": {
-            "vehiculos": [
-                "V73",
-                "V74",
-                "V75",
-                "V76",
-                "V77",
-                "V78"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
                     0,
                     1,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
                     0,
                     0,
                     0,
@@ -1549,472 +1553,7 @@
                 [
                     1,
                     0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "2040.0": {
-            "vehiculos": [
-                "V73",
-                "V76",
-                "V78",
-                "V79",
-                "V80",
-                "V81",
-                "V82",
-                "V83"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
                     1,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    1,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "2160.0": {
-            "vehiculos": [
-                "V81",
-                "V84",
-                "V86",
-                "V88"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "2280.0": {
-            "vehiculos": [
-                "V86",
-                "V88",
-                "V89",
-                "V91",
-                "V92",
-                "V93"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "2400.0": {
-            "vehiculos": [
-                "V92",
-                "V93",
-                "V94",
-                "V95",
-                "V96",
-                "V97",
-                "V98"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "2520.0": {
-            "vehiculos": [
-                "V100",
-                "V102",
-                "V103",
-                "V93",
-                "V98",
-                "V99"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "2640.0": {
-            "vehiculos": [
-                "V103",
-                "V105",
-                "V106",
-                "V107",
-                "V108",
-                "V93"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    1,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    1,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "2760.0": {
-            "vehiculos": [
-                "V107",
-                "V108",
-                "V109",
-                "V110",
-                "V111",
-                "V112",
-                "V113"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
                     0,
                     0,
                     0,
@@ -2023,95 +1562,12 @@
                 ],
                 [
                     0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    1,
-                    0
-                ]
-            ]
-        },
-        "2880.0": {
-            "vehiculos": [
-                "V109",
-                "V110",
-                "V111",
-                "V113",
-                "V115",
-                "V116",
-                "V117",
-                "V118"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    1,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    1,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    1,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
                     1,
                     0,
                     0,
                     0,
                     0,
+                    0,
                     0
                 ],
                 [
@@ -2123,21 +1579,9 @@
                     0,
                     0,
                     0
-                ]
-            ]
-        },
-        "3000.0": {
-            "vehiculos": [
-                "V116",
-                "V117",
-                "V118",
-                "V119",
-                "V120",
-                "V121",
-                "V122"
-            ],
-            "A": [
+                ],
                 [
+                    0,
                     0,
                     0,
                     0,
@@ -2153,14 +1597,6 @@
                     0,
                     0,
                     0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
                     0,
                     0
                 ],
@@ -2171,365 +1607,15 @@
                     0,
                     0,
                     0,
-                    1
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
                     0,
                     0
                 ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    1,
-                    0,
-                    0,
-                    1,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "3120.0": {
-            "vehiculos": [
-                "V120",
-                "V121",
-                "V123",
-                "V124",
-                "V125",
-                "V126",
-                "V127"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "3240.0": {
-            "vehiculos": [
-                "V126",
-                "V127",
-                "V128",
-                "V129",
-                "V130",
-                "V131",
-                "V132"
-            ],
-            "A": [
-                [
-                    0,
-                    1,
-                    0,
-                    1,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    1,
-                    0,
-                    0,
-                    1,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    1,
-                    1,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "3360.0": {
-            "vehiculos": [
-                "V132",
-                "V134",
-                "V135",
-                "V136",
-                "V137"
-            ],
-            "A": [
                 [
                     0,
                     1,
                     0,
                     0,
-                    0
-                ],
-                [
                     1,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "3480.0": {
-            "vehiculos": [
-                "V134",
-                "V135",
-                "V136",
-                "V139",
-                "V140",
-                "V141",
-                "V142"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ]
-            ]
-        },
-        "3600.0": {
-            "vehiculos": [
-                "V142",
-                "V143",
-                "V144",
-                "V145",
-                "V146",
-                "V147"
-            ],
-            "A": [
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                [
-                    0,
-                    0,
-                    0,
                     0,
                     0,
                     0

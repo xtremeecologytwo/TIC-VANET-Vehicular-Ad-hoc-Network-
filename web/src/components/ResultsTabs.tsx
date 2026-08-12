@@ -6,7 +6,7 @@ type Tab = "v2i" | "v2v" | "mat" | "mh";
 
 /* Rejilla binaria 0/1 (celda coloreada si =1), acotada para no saturar. */
 function MatrixGrid({ rows, cols, data, tone = "accent", max = 36 }: {
-  rows: string[]; cols: string[]; data: number[][]; tone?: "accent" | "ok"; max?: number;
+  rows: string[]; cols: string[]; data: number[][]; tone?: "accent" | "ok" | "warn"; max?: number;
 }) {
   const rr = rows.slice(0, max);
   const cc = cols.slice(0, max);
@@ -43,11 +43,26 @@ function soloAlcanzadas(labels: string[], data: number[][]) {
   return { cols: labels.filter((_, j) => keep[j]), data: data.map((r) => r.filter((_, j) => keep[j])) };
 }
 
+/* Opciones y selección para el visor de matrices multisalto. */
+function matOptions(H: number) {
+  const o: { v: string; label: string }[] = [];
+  for (let h = 1; h <= H; h++) o.push({ v: `R${h}`, label: `R${h} — acumulada (≤${h} saltos)` });
+  for (let h = 1; h <= H; h++) o.push({ v: `S${h}`, label: `S${h} — primera aparición (exact. ${h})` });
+  o.push({ v: "D", label: `D — desconexión (1 = no conecta con ≤${H})` });
+  return o;
+}
+function pickMatrix(mh: Multihop, sel: string): { data: number[][]; tone: "accent" | "ok" | "warn" } {
+  if (sel === "D") return { data: mh.D, tone: "warn" };
+  const h = parseInt(sel.slice(1), 10) - 1;
+  return sel[0] === "R" ? { data: mh.R[h], tone: "accent" } : { data: mh.S[h], tone: "ok" };
+}
+
 export default function ResultsTabs({ t, H }: { t: number | null; H: number }) {
   const [tab, setTab] = useState<Tab>("v2i");
   const [v2i, setV2i] = useState<{ total: number; tuplas: V2iTuple[] } | null>(null);
   const [v2v, setV2v] = useState<{ total: number; tuplas: V2vTuple[] } | null>(null);
   const [mh, setMh] = useState<Multihop | null>(null);
+  const [mhMat, setMhMat] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => { if (tab === "v2i" && !v2i) api.tuplesV2i().then(setV2i).catch((e) => setErr(e.message)); }, [tab, v2i]);
@@ -55,7 +70,7 @@ export default function ResultsTabs({ t, H }: { t: number | null; H: number }) {
   useEffect(() => {
     if ((tab === "mat" || tab === "mh") && t != null) {
       setErr(null);
-      api.multihop(t, H).then(setMh).catch((e) => setErr(e.message));
+      api.multihop(t, H).then((r) => { setMh(r); setMhMat(`R${r.H}`); }).catch((e) => setErr(e.message));
     }
   }, [tab, t, H]);
 
@@ -123,6 +138,24 @@ export default function ResultsTabs({ t, H }: { t: number | null; H: number }) {
                 ? `⚠ ${mh.resumen.vehiculos_desconectados} vehículo(s) sin RSU ni con ${H} saltos: ${mh.resumen.ids_desconectados.join(", ")}`
                 : `✓ Todos los ${mh.resumen.n_vehiculos} vehículos alcanzan un RSU con ≤ ${H} saltos.`}
             </div>
+
+            {mhMat && (() => {
+              const pk = pickMatrix(mh, mhMat);
+              const flt = soloAlcanzadas(mh.rsu_ids, pk.data);
+              return (
+                <div className="mh-mat">
+                  <div className="mh-mat-hd">
+                    <span className="matlab">Matriz del instante (vehículo × RSU)</span>
+                    <select value={mhMat} onChange={(e) => setMhMat(e.target.value)}>
+                      {matOptions(mh.H).map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+                    </select>
+                  </div>
+                  {flt.cols.length
+                    ? <MatrixGrid rows={mh.vehiculos} cols={flt.cols} data={flt.data} tone={pk.tone} />
+                    : <div className="empty mono">Matriz vacía (ningún 1) en este instante.</div>}
+                </div>
+              );
+            })()}
           </div>
         )
       ) : <div className="empty mono">Cargando…</div>)}

@@ -67,6 +67,8 @@ web/src/
 - [x] Consola: stepper M1/M2/M3, **selección del área por 2 clics**, edificios +
       RSU candidatas/desplegadas, KPIs, flujo completo contra la API
 - [x] Animación de vehículos + enlaces V2I/V2V por instante (línea de tiempo)
-- [x] Tablas de tuplas V2I/V2V · matrices A/B · multisalto
-- [ ] Alinear el `output/` de demo (el pre-cargado es un mosaico de sesiones)
+- [x] Tablas de tuplas V2I/V2V · matrices A/B · multisalto (resumen + visor Rₕ/Sₕ/D_H)
+- [x] Flujo completo verificado end-to-end con SUMO real (generar→filtrar→simular→optimizar)
+- [x] `output/` de demo consistente (una sola corrida)
 - [ ] Deploy combinado (servir `web/dist` desde FastAPI) — ver `../DESPLIEGUE.md`
+- [ ] Extras opcionales: filtros en las tablas de tuplas, círculos de cobertura de RSU

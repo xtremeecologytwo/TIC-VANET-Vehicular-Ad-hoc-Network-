@@ -28,6 +28,9 @@ ENV/
 *.snm
 *.vrb
 
+# ---- Artefactos sueltos de SUMO (randomTrips deja esto en la raíz) ----
+trips.trips.xml
+
 # ---- Sistema operativo ----
 .DS_Store
 Thumbs.db
