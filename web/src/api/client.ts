@@ -22,10 +22,36 @@ export interface SimResult {
   timesteps: number[];
 }
 export interface OptResult {
-  resumen: { n_escenarios: number; n_vehiculos: number; n_rsu_candidatos: number; n_tuplas_CVR: number };
+  resumen: {
+    n_escenarios: number; n_vehiculos: number; n_rsu_candidatos: number;
+    n_tuplas_CVR: number;
+    /** MaxR con el que se resolvió. Sin límite = nº de RSU candidatas. */
+    max_rsu: number;
+  };
   objetivo: number | null;
   n_desplegadas: number;
   status: string;
+  /** Cómo quedó servida la demanda. Un "par" es un (instante, vehículo). */
+  cobertura: {
+    n_pares: number;        // total de pares (instante, vehículo)
+    conectados: number;     // los que quedan comunicados
+    desconectados: number;  // los que caen en el RSU artificial r_inf
+    cobertura_pct: number;  // 100 * conectados / n_pares
+    directos: number;       // conectados a 1 salto (V2I directo)
+    multisalto: number;     // conectados a 2..H saltos (puenteados por V2V)
+    por_salto: Record<string, number>;
+  } | null;
+  /** Cómo terminó el solver y cuánto tardó (para saber si topó el límite). */
+  solver: {
+    status: string;          // frase cruda de CPLEX
+    etiqueta: string;        // legible: "Óptimo demostrado" / "Cortado por tiempo"
+    detalle: string;         // qué significa, en una frase
+    optimo: boolean;         // terminó solo: no existe mejor solución
+    corto_por_tiempo: boolean; // se quedó sin tiempo y devolvió la mejor hallada
+    segundos: number;        // tiempo del motor CPLEX (lo que se compara con el tope)
+    segundos_total: number;  // armado del modelo + motor
+    limite_tiempo: number | null; // el tope que se le dio (null = sin límite)
+  };
   desplegadas: Rsu[];
   candidatas: Rsu[];
 }
@@ -75,7 +101,9 @@ export const api = {
     req<RsuResult>("/api/rsu/filter", { method: "POST", body: JSON.stringify(body) }),
   simulate: (body: { radio_obu: number; step_min: number; bidireccional: boolean }) =>
     req<SimResult>("/api/simulate", { method: "POST", body: JSON.stringify(body) }),
-  optimize: (body: { H: number; max_rsu: number | null }) =>
+  optimize: (body: {
+    H: number; max_rsu: number | null; limite_tiempo: number | null;
+  }) =>
     req<OptResult>("/api/optimize", { method: "POST", body: JSON.stringify(body) }),
   timesteps: () => req<{ timesteps: number[] }>("/api/timesteps"),
   connectivity: (t: number) => req<ConnFrame>(`/api/connectivity?t=${t}`),

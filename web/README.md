@@ -52,7 +52,13 @@ web/src/
   para hablar con el backend.
 - **`App.tsx`** — guarda los parámetros y los resultados; cada botón dispara una
   acción (`generar`, `filtrar`, `simular`, `optimizar`) que llama al cliente y
-  actualiza mapa + KPIs. Controla también el *play* de la línea de tiempo.
+  actualiza mapa + KPIs. Controla también el *play* de la línea de tiempo. En
+  **M3** viven dos casillas: *"Limitar nº de RSU (MaxR)"* — apagada envía
+  `max_rsu: null` (sin límite efectivo, el comportamiento por defecto), encendida
+  envía el número escrito — y *"Limitar el tiempo del solver"*, encendida en 60 s
+  por defecto, que apagada envía `limite_tiempo: null` para que CPLEX busque hasta
+  demostrar el óptimo. Los KPIs **MaxR**, **Solver** y **Tiempo solver** dejan
+  constancia de con qué valores se resolvió.
 - **`ScenarioMap.tsx`** — `DrawRectangle` selecciona el área con **2 clics** (sin
   leaflet-draw); `FitBounds` encuadra e invalida el tamaño (evita el desalineo del
   primer render). Capas: edificios (GeoJSON), RSU candidatas/desplegadas y, por
@@ -69,6 +75,13 @@ web/src/
 - [x] Animación de vehículos + enlaces V2I/V2V por instante (línea de tiempo)
 - [x] Tablas de tuplas V2I/V2V · matrices A/B · multisalto (resumen + visor Rₕ/Sₕ/D_H)
 - [x] Flujo completo verificado end-to-end con SUMO real (generar→filtrar→simular→optimizar)
-- [x] `output/` de demo consistente (una sola corrida)
+- [x] `output/` de demo consistente (una sola corrida; no se versiona)
 - [x] Filtros en las tablas de tuplas · círculos de cobertura de RSU · botón "Nuevo escenario"
+- [x] Control de **MaxR** (límite de RSU desplegables) en el panel M3
+- [x] Control del **tope de tiempo del solver** (5–3600 s, o sin límite)
+- [x] KPIs **Solver** / **Tiempo solver**: si el óptimo está demostrado o si CPLEX
+      se cortó por el límite de tiempo, y cuántos segundos consumió el motor
+- [x] KPIs **Cobertura** / **Desconectados** / **Multisalto**: qué porcentaje de
+      los pares (instante, vehículo) queda comunicado y por qué vía
+- [x] Cronómetro por etapa en la consola del backend (`api/cronometro.py`)
 - [ ] Empaquetado/despliegue (más adelante)

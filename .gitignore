@@ -1,3 +1,10 @@
+# =====================================================================
+#  .gitignore — SmartCityNet VANET
+#  Criterio: al repositorio SOLO sube el PROGRAMA (código fuente).
+#  Todo lo que sea generado, pesado, personal o documentación de trabajo
+#  se queda en local.
+# =====================================================================
+
 # ---- Python ----
 __pycache__/
 *.py[cod]
@@ -9,6 +16,34 @@ __pycache__/
 venv/
 env/
 ENV/
+
+# ---- Dependencias y build del frontend ----
+# (web/.gitignore ya las cubre; se repiten aquí por si se mueve la carpeta)
+node_modules/
+web/node_modules/
+web/dist/
+
+# ---- DATOS GENERADOS por una corrida ------------------------------
+# output/ lo produce el propio programa (OSM + SUMO + tuplas). Pesaba
+# 137 MB, con dos archivos de ~50 MB cada uno: era el 96 % del repo.
+# Se regenera entero desde la interfaz con "Generar escenario".
+output/
+
+# El .dat del solver también es generado en cada optimización.
+optimizacion/rsu_backend.dat
+# (rsu_micro.dat SÍ se versiona: es el ejemplo mínimo de validación)
+
+# ---- Documentación de trabajo (no es el programa) ----
+explicaciones/
+Jornadas SmartCityNet/
+
+# ---- Datos personales ----
+# El CV lleva teléfono, dirección y los datos de contacto de terceros.
+CV/
+
+# ---- Herramientas locales del editor / asistente ----
+.claude/skills/
+skills-lock.json
 
 # ---- LaTeX (basura de compilación) ----
 *.aux
@@ -35,13 +70,3 @@ trips.trips.xml
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# ---- Notas ----
-# Los datos generados en output/ (map.osm, *.net.xml, fcd.xml, *.json) ya estaban
-# versionados en commits anteriores y se dejan tal cual. Si en el futuro se quiere
-# dejar de versionarlos, descomentar y hacer `git rm --cached`:
-# output/map.osm
-# output/*.net.xml
-# output/*.poly.xml
-# output/*.rou.xml
-# output/fcd.xml

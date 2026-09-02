@@ -48,7 +48,8 @@ la matemática (LoS, matrices de conectividad, multisalto, optimización) vive e
 ```
 TIC-VANET/
 ├── api/                     # 🌐 API REST (FastAPI) — capa HTTP sobre el backend
-│   └── main.py              #    endpoints + estado del escenario + conversión lat/lon
+│   ├── main.py              #    endpoints + estado del escenario + conversión lat/lon
+│   └── cronometro.py        #    mide y imprime en consola el tiempo de cada etapa
 │
 ├── web/                     # 🖥️ Frontend React (Vite + TypeScript)
 │   ├── src/
@@ -73,14 +74,22 @@ TIC-VANET/
 ├── optimizacion/            # 🧮 Optimización del despliegue de RSU
 │   ├── optimizar_rsu.py     #    modela y resuelve con docplex/CPLEX
 │   ├── rsu_model.mod        #    modelo OPL de referencia (misma matemática)
-│   └── rsu_micro.dat / rsu_backend.dat  # datos de ejemplo / generado del backend
+│   └── rsu_micro.dat        #    micro-ejemplo de validación (rsu_backend.dat es generado)
 │
-├── output/                  # 📤 Artefactos de una corrida (SUMO, JSON de tuplas…)
 ├── requirements.txt         # 📦 dependencias Python (backend + API)
 └── mini_proyecto_vanet.py   # 📚 demo didáctica del flujo completo (backend)
     ejemplo_multisalto.py    #    (scripts educativos, independientes de la app)
     explicar_multisalto.py
 ```
+
+**Carpetas que existen en local pero NO se versionan** (ver [`.gitignore`](.gitignore)):
+
+| Carpeta | Qué es | Por qué no sube |
+|---|---|---|
+| `output/` | Artefactos de una corrida (OSM, red SUMO, FCD, JSON de tuplas) | Se **regenera** con "Generar escenario". Pesaba 137 MB, con dos archivos de ~50 MB |
+| `web/node_modules/` | Dependencias del frontend | Se reinstalan con `npm install` desde `package-lock.json` |
+| `explicaciones/` | Documentos de estudio (PDF + LaTeX) | Documentación de trabajo, no es el programa |
+| `Jornadas SmartCityNet/` | Artículo científico y sus figuras | Ídem |
 
 ---
 
@@ -137,10 +146,16 @@ El pipeline es una secuencia real, reflejada en el *stepper* **M1 → M2 → M3*
    tuplas V2I/V2V y las matrices; aparece la **línea de tiempo** para animar
    vehículos y enlaces por instante.
 5. **M3 · Optimizar despliegue** — construye el dataset CVR y resuelve con CPLEX;
-   las **RSU desplegadas** se resaltan en verde sobre el mapa.
+   las **RSU desplegadas** se resaltan en verde sobre el mapa. El panel trae dos
+   casillas: **"Limitar nº de RSU (MaxR)"** (ver *[MaxR desde la interfaz](#maxr)*)
+   y **"Limitar el tiempo del solver"** (ver *[El límite de tiempo](#solver)*),
+   ambas apagadas equivalen a "sin límite".
 
 Debajo, la sección **Análisis** muestra las **tuplas** V2I/V2V, las **matrices
 A/B** del instante activo y el **resumen multisalto**.
+
+**Cada clic queda cronometrado en la consola del backend** (la terminal donde
+corre `uvicorn`): ver *[Medición de tiempos](#tiempos)*.
 
 ---
 
@@ -161,7 +176,7 @@ mapa.
 | `POST /api/simulate` | **M2**: FCD + LoS + tuplas V2I/V2V + matrices | `ejecutar_simulacion_sumo`, `parsear_fcd`, `generar_tuplas_visibilidad`, `generar_tuplas_v2v` |
 | `GET /api/timesteps` | Instantes disponibles para la animación | — |
 | `GET /api/connectivity?t=` | Vehículos + enlaces V2I/V2V de un instante | `convertir_xy_a_lonlat` |
-| `POST /api/optimize` | **M3**: construye CVR y resuelve | `exportar_dat_desde_memoria`, `optimizar` |
+| `POST /api/optimize` | **M3**: construye CVR y resuelve (`H`, `max_rsu`, `limite_tiempo`) | `exportar_dat_desde_memoria`, `optimizar` |
 | `GET /api/tuples/v2i` · `/v2v` | Tuplas de conectividad (paginadas) | — |
 | `GET /api/multihop?t=&H=` | A, B, R_h, S_h, D_H, d y resumen de un instante | `analizar_timestep` |
 
@@ -174,6 +189,212 @@ Esto es clave: la interpolación lineal entre *bounding boxes* fallaba porque
 
 Documentación interactiva de la API: con el servidor arriba, abre
 `http://localhost:8000/docs` (Swagger generado por FastAPI).
+
+---
+
+<a id="tiempos"></a>
+
+## ⏱️ Medición de tiempos por consola (`api/cronometro.py`)
+
+Cada acción del usuario se **cronometra y se imprime en la terminal donde corre
+`uvicorn`**. No aparece nada en la interfaz: es una herramienta de medición para
+experimentar (por ejemplo, comparar el mismo mapa **con y sin** la restricción
+`MaxR`, o ver cuánto pesa el solver frente al resto del pipeline).
+
+**Dos niveles de medida:**
+
+| Nivel | Qué mide | ¿Suma al total? |
+|---|---|---|
+| **Etapa** | Una acción del usuario = **un clic** (Generar, Filtrar, Simular, Optimizar) | ✅ sí |
+| **Subetapa** | Una fase interna de esa acción (descarga OSM, SUMO, LoS, solver…) | ❌ no: su tiempo ya está dentro de la etapa |
+
+**Cuándo empieza y termina una sesión de medición:**
+
+- **Generar escenario** abre una **sesión nueva** (reinicia los contadores) y
+  escribe la cabecera con los parámetros de la corrida.
+- Cada etapa posterior imprime su tiempo y el **acumulado** de la sesión.
+- **Optimizar despliegue** cierra el flujo e imprime la **tabla resumen con la
+  suma total** y el peso relativo (%) de cada etapa.
+- Si se empieza por la mitad (retomando el escenario guardado en `output/`), la
+  sesión se abre sola y lo indica: *"sesion iniciada sobre escenario existente"*.
+
+**Ejemplo real de salida** (escenario retomado + una optimización con `MaxR = 20`):
+
+```
+================================================================================
+  SmartCityNet - CRONOMETRO DE ETAPAS   (sesion iniciada sobre escenario existente)
+================================================================================
+
+[1] Filtrar RSU candidatas (grado>=4, cluster=20 m)
+      - Grado + clustering espacial .........................     3.255 s
+    > etapa     3.292 s  |  acumulado     3.292 s
+
+[2] M3 - Optimizar despliegue (H=2, MaxR=20)
+      - Multisalto + construccion del CVR (.dat) ............     4.671 s
+      - Solver CPLEX (branch & bound) .......................    21.873 s
+    > etapa    26.558 s  |  acumulado    29.850 s
+
+================================================================================
+  RESUMEN DE TIEMPOS
+================================================================================
+   1. Filtrar RSU candidatas (grado>=4, cluster=20 m) .........     3.292 s   ( 11.0 %)
+   2. M3 - Optimizar despliegue (H=2, MaxR=20) ................    26.558 s   ( 89.0 %)
+  ----------------------------------------------------------------------------
+      TOTAL ...................................................    29.850 s
+================================================================================
+```
+
+**Qué se mide en cada etapa:**
+
+| Etapa (clic) | Subetapas |
+|---|---|
+| `M1 - Generar escenario` | Descarga OSM · SUMO (netconvert/polyconvert/trips) · Parseo junctions + edificios · Conversión a lat/lon |
+| `Filtrar RSU candidatas` | Grado + clustering espacial |
+| `M2 - Simular conectividad` | Simulación SUMO (tráfico + FCD) · Parseo del FCD · LoS V2I · LoS V2V |
+| `M3 - Optimizar despliegue` | Multisalto + construcción del CVR (`.dat`) · Solver CPLEX (con una nota debajo: `status` de CPLEX, tiempo del motor y límite usado) |
+
+El nombre de cada etapa incluye **los parámetros con los que se midió** (grado,
+radio, `H`, `MaxR`…), de modo que la consola queda como bitácora de la corrida.
+Las peticiones de la línea de tiempo (`/api/connectivity`, `/api/multihop`) **no**
+se cronometran: se disparan solas al animar y ensuciarían la medición.
+
+**API del módulo** (por si se quiere instrumentar algo más):
+
+| Función | Qué hace |
+|---|---|
+| `nueva_sesion(titulo)` | Reinicia contadores e imprime la cabecera |
+| `etapa(nombre)` | *Context manager*: mide una acción del usuario y la suma al total |
+| `subetapa(nombre)` | *Context manager*: mide una fase interna (informativa) |
+| `resumen()` | Imprime la tabla final con la suma y devuelve `{pasos, total}` |
+| `nota(texto)` | Imprime una línea informativa bajo la subetapa recién medida |
+
+`subetapa` cede además un objeto `Medicion`: al salir del `with`, `m.segundos`
+guarda lo que tardó, por si hay que devolvérselo al frontend.
+
+> El marco de la tabla es **ASCII puro** a propósito: la consola de Windows no
+> siempre puede imprimir caracteres de dibujo o emojis, y `_emitir()` degrada con
+> elegancia si algún acento no cabe en la página de códigos activa.
+
+---
+
+<a id="maxr"></a>
+
+## 🎚️ MaxR desde la interfaz — limitar el nº de RSU
+
+`MaxR` es la restricción del modelo que acota **cuántas RSU se pueden desplegar**
+(Ec. 5 del modelo: `Σ_{r∈R\{r_inf}} y_r ≤ MaxR`). Antes solo se podía tocar desde
+la línea de comandos (`--max-rsu`); ahora está en el panel **M3 · Optimización**:
+
+| Control | Estado | Qué se envía a la API | Efecto en el modelo |
+|---|---|---|---|
+| ☐ *Limitar nº de RSU (MaxR)* | **apagado (por defecto)** | `max_rsu: null` | `exportar_dat` fija `MaxR` = nº de RSU candidatas ⇒ la restricción **existe pero nunca ata**: es el comportamiento de siempre |
+| ☑ *Limitar nº de RSU (MaxR)* | encendido | `max_rsu: <número>` | El solver no puede desplegar más de ese número; si hace falta, deja vehículos desconectados (cayendo en `r_inf`, con su penalización) |
+
+El campo numérico se acota automáticamente a `[1, nº de RSU candidatas]`. Tras
+optimizar, el KPI **MaxR** muestra el valor usado — `sin límite (N)` cuando la
+casilla está apagada, siendo `N` el número de candidatas.
+
+**Para qué sirve:** permite medir, **sobre el mismo mapa y la misma simulación**,
+cuánto cambia el tiempo de resolución y la calidad de la solución al restringir el
+presupuesto de infraestructura. Con la restricción floja el problema es "fácil"
+(el solver despliega todo lo que reduce penalización); al apretarla se vuelve una
+elección combinatoria real y el *branch & bound* trabaja mucho más.
+
+---
+
+<a id="solver"></a>
+
+## 🚦 El límite de tiempo del solver y el KPI *Solver*
+
+**El programa no tiene límite de tiempo.** M1 (OSM + SUMO), el filtrado y M2
+(simulación + LoS) tardan lo que tengan que tardar: no hay *timeout* en el
+navegador, ni en el proxy de Vite, ni en `uvicorn`. Lo único acotado es la
+búsqueda de CPLEX en M3, con `limite_tiempo` — y es **configurable desde la
+interfaz**:
+
+| Casilla *"Limitar el tiempo del solver"* | Se envía | Efecto |
+|---|---|---|
+| ☑ encendida (por defecto, 60 s) | `limite_tiempo: <segundos>` | Al agotarlo, CPLEX devuelve la mejor solución encontrada. Rango 5–3600 s |
+| ☐ apagada | `limite_tiempo: null` | **Sin límite**: busca hasta demostrar el óptimo. Puede tardar mucho y la petición queda esperando |
+
+**Por qué existe ese límite.** El *branch & bound* hace dos trabajos: **encontrar**
+una buena combinación de RSU (rápido) y **demostrar** que ninguna otra es mejor
+(lento). Lo caro es lo segundo. Sin límite, un problema grande (grado bajo + 1000
+vehículos + `H` alto) puede quedarse minutos demostrando algo que ya encontró, y
+desde la interfaz solo se ve el ⏳. Con límite, CPLEX **para de buscar y entrega la
+mejor solución que tenía**: nunca se pierde el resultado, solo el certificado de
+optimalidad. Además el modelo es **siempre factible** por diseño (el RSU artificial
+`r_inf` permite desconectar a cualquier vehículo pagando `P[hmax]`), así que el
+caso "no encontró nada" prácticamente no ocurre.
+
+**Cómo saberlo desde la interfaz.** Tras optimizar aparecen dos KPIs nuevos:
+
+| KPI | Qué muestra |
+|---|---|
+| **Cobertura** | **La métrica del proyecto**: % de pares (instante, vehículo) que quedan comunicados, con el conteo debajo |
+| **Desconectados** | Pares que caen en el RSU artificial `r_inf` |
+| **Multisalto** | Pares conectados a 2–H saltos (puenteados por V2V) y cuántos van directos a una RSU |
+| **RSU desplegadas** | Cuántas antenas usa la solución |
+| **Solver** | *Óptimo demostrado* (verde) o *Cortado por tiempo* (ámbar), con una frase debajo explicando qué significa |
+| **Tiempo solver** | Segundos que consumió el **motor** CPLEX y contra qué límite (`de un límite de 60 s` / `topó el límite de 60 s`) |
+
+El bloque `cobertura` de la respuesta trae `n_pares`, `conectados`,
+`desconectados`, `cobertura_pct`, `directos`, `multisalto` y `por_salto`
+(carga servida en cada nivel de salto). Se calcula en
+`optimizar()` a partir de las variables `Rts` de la solución, y también se
+imprime en la consola del backend bajo la subetapa del solver.
+
+La API los devuelve en el bloque `solver` de `POST /api/optimize`:
+
+| Campo | Qué es |
+|---|---|
+| `status` | Frase cruda de CPLEX (`integer optimal solution`, `time limit exceeded`…) |
+| `etiqueta` / `detalle` | La traducción legible que pinta el KPI |
+| `optimo` | `true` si CPLEX terminó por su cuenta (incluye *integer optimal, tolerance*) |
+| `corto_por_tiempo` | `true` si agotó el presupuesto y devolvió la mejor solución hallada |
+| `segundos` | Tiempo del **motor** (`solve_details.time`): es el que se compara con el límite |
+| `segundos_total` | Armado del modelo **+** motor. Siempre mayor; por eso `segundos_total` puede pasar del límite sin que el solver lo haya topado |
+| `limite_tiempo` | El tope que se usó en esa corrida (`null` = sin límite) |
+
+> **Por qué se separan `segundos` y `segundos_total`.** Construir el modelo
+> docplex (decenas de miles de tuplas `CVR`) toma varios segundos y **no** cuenta
+> para el límite: `set_time_limit` solo gobierna la resolución. Medido con el
+> reloj, una corrida con tope de 5 s dio `segundos_total = 5.64 s` pero
+> `segundos = 1.97 s` de motor, con `status = integer optimal, tolerance`: no
+> topó nada. Comparar el total contra el límite habría dado un falso positivo.
+
+**Al comparar tiempos entre configuraciones**, revisa el KPI *Solver* en cada
+corrida: si sale **Cortado por tiempo**, el número medido es el tope que pusiste
+tú, no la dificultad del problema — sube el tope (o quítalo) y repite esa fila.
+
+### ¿Cortar por tiempo cuesta conectividad?
+
+Es la pregunta que importa, porque el objetivo del proyecto es **conectar al mayor
+número de vehículos**. Medido con los pesos actuales sobre `output/`, con MaxR
+libre y `H = 3`:
+
+| Tope | Motor | Z | **Pares desconectados** | Cobertura | RSU | Estado |
+|---|---|---|---|---|---|---|
+| 30 s | 16,4 s | 177 330 | **139** | 96,23 % | 249 | cerró |
+| 60 s | 16,6 s | 177 330 | **139** | 96,23 % | 249 | cerró |
+| 300 s | 16,8 s | 177 330 | **139** | 96,23 % | 249 | cerró |
+
+**Con esta configuración el tope ni siquiera llega a actuar**: el solver cierra
+solo en ~17 s, muy por debajo del límite más corto. Las tres filas dan la solución
+idéntica porque las tres son la misma solución óptima.
+
+Eso no quiere decir que el tope sobre. Sirve de red de seguridad para
+configuraciones más duras: subir `H`, meter 1000 vehículos o apretar `MaxR` a un
+valor intermedio hace crecer el árbol de búsqueda, y ahí sí puede cortar. Cuando
+corta, lo que se pierde es **precisión en el nº de RSU, no cobertura** — el peso
+de una desconexión es tan alto frente al de una antena que la parte de
+conectividad se resuelve mucho antes que la de recuento.
+
+> **Matiz importante sobre lo que está *demostrado*.** Que el gap sea pequeño no
+> certifica por sí solo el número de desconexiones: el modelo podría, en teoría,
+> conectar un par más a cambio de desplegar muchas antenas extra, y el balance
+> quedar dentro del gap. Cuánta holgura hay para eso lo decide la relación entre
+> `penal_desconexion` y `Cost[r]` — ver [Los pesos del modelo](#pesos).
 
 ---
 
@@ -1110,6 +1331,120 @@ Se sugiere crear una tabla comparativa para la tesis:
 
 > Nota: el **grado** es el número de **vecinos únicos** (grafo no dirigido). Con grado 5 (config D) muy pocas junctions del centro histórico califican (la mayoría son cruces de 4 vecinos), por eso D es tan selectivo. Valores reproducibles con `filtrar_junctions_rsu()` sobre `output/`.
 
+### Experimento: cobertura frente a presupuesto de RSU
+
+Con la casilla *"Limitar nº de RSU (MaxR)"* se puede trazar la **curva de diseño**
+del escenario: cuánta cobertura compra cada antena, **sobre el mismo mapa y la
+misma simulación**. Protocolo:
+
+1. Genera el escenario y simula **una sola vez** (M1 → M2). Así todas las medidas
+   comparten `.dat`, vehículos e instantes: solo cambia `MaxR`.
+2. Pulsa **Optimizar** con la casilla **apagada** → anota el tiempo de la subetapa
+   *"Solver CPLEX"*, el `Objetivo` y las `RSU desplegadas`.
+3. Repite pulsando **Optimizar** con la casilla **encendida** y distintos valores.
+   Cada corrida se añade a la misma sesión del cronómetro, así que el resumen final
+   las lista todas con su nombre (`MaxR=…`) y su porcentaje del total.
+
+Resultado medido con los **pesos actuales** sobre un `output/` de 3691 pares
+(instante, vehículo), 1649 RSU candidatas, `H = 3` y tope de 120 s por punto:
+
+| MaxR | RSU usadas | Conectados | **Cobertura** | Multisalto | +pares por RSU extra |
+|---|---|---|---|---|---|
+| 10 | 10 | 1282 | 34,73 % | 235 | — |
+| 25 | 25 | 1977 | 53,56 % | 220 | **46,33** |
+| 50 | 50 | 2604 | 70,55 % | 203 | 25,08 |
+| 100 | 100 | 3201 | 86,72 % | 95 | 11,94 |
+| 150 | 150 | 3412 | 92,44 % | 61 | 4,22 |
+| 200 | 200 | 3509 | 95,07 % | 41 | 1,94 |
+| 300 | **248** | 3552 | 96,23 % | 29 | 0,90 |
+| 400 | **249** | 3552 | 96,23 % | 28 | 0,00 |
+| sin límite | **249** | 3552 | 96,23 % | 28 | — |
+
+**Ninguna fila se cortó por tiempo**: las nueve cerraron con `integer optimal`, así
+que todas las coberturas son exactas, no cotas inferiores.
+
+Cuatro lecturas:
+
+1. **La cobertura satura, no hace campana.** Subir `MaxR` nunca puede reducirla:
+   toda solución válida con `MaxR = k` lo sigue siendo con `k+1`. El techo aquí es
+   **96,23 %** — quedan **139 pares irreducibles** que ninguna infraestructura
+   alcanza (no ven ninguna candidata, ni directamente ni por multisalto).
+2. **`MaxR` deja de atar en ~249.** Con `MaxR = 300` el modelo usó 248 RSU y con
+   `400` usó 249: le sobraba presupuesto en ambos casos. Por eso poner un tope por
+   encima de ~250 **no cambia nada** en este escenario.
+3. **El codo está entre 100 y 150 RSU:** con 150 antenas (el 60 % de las 249 que
+   usaría sin límite) ya se consigue el 92 % de cobertura. De 200 en adelante cada
+   antena nueva conecta menos de 2 pares, y de 300 en adelante menos de 1.
+4. **El multisalto crece según escasea la infraestructura** (28 → 235 al bajar
+   `MaxR`). Es el argumento de por qué el V2V importa: su aporte es máximo
+   justamente en el régimen de presupuesto limitado, que es el realista.
+
+> Sobre el multisalto: en un escenario anterior con muchas más candidatas (5325)
+> la curva hacía un **pico interior** en `MaxR ≈ 50` y caía a ambos lados, porque
+> con muy pocas antenas ni siquiera hay adónde puentear. Aquí, con 1649
+> candidatas, esa zona queda por debajo de `MaxR = 10` y solo se ve el tramo
+> decreciente. **La forma exacta depende del escenario; lo robusto es la
+> tendencia**: más infraestructura, menos multisalto.
+
+<a id="pesos"></a>
+
+### Los pesos del modelo y qué gobierna cada uno
+
+Los cuatro parámetros de [`construir_datos_opl()`](backend/exportar_dat.py) que
+definen el comportamiento del modelo:
+
+| Parámetro | Valor actual | Qué es |
+|---|---|---|
+| `cap_real` | `300` | Capacidad de una RSU **en unidades de carga × saltos** |
+| `carga_default` | `10` | Carga `L` de cada vehículo (p. ej. Mbps) |
+| `Cost[r]` | `10` | Lo que cuesta instalar una antena |
+| `penal_desconexion` | `100` | `P[hmax]`: lo que paga un vehículo sin cobertura |
+
+**Ojo con la capacidad:** la Ec. 4 consume `Rts · P_h · L`, no solo `L`. O sea, un
+vehículo servido a 2 saltos gasta **el doble** de capacidad que uno directo. Con
+los valores actuales, cada RSU aguanta **30 vehículos a 1 salto**, 15 a 2 saltos
+o 10 a 3, por instante.
+
+> `cap_inf` (capacidad de `r_inf`) **no se usa**: ambos modelos excluyen a `r_inf`
+> de la Ec. 4, porque no es una antena sino "no tener cobertura". Ponerle un tope
+> haría el modelo infactible en vez de reportar la desconexión.
+
+**La razón que de verdad manda.** No son los valores sueltos, sino cuántas antenas
+está dispuesto el modelo a pagar por rescatar un vehículo-instante:
+
+```
+antenas que paga = (P[hmax] − P_h) × L / Cost
+```
+
+Con los valores actuales: `(100 − 1) × 10 / 10 = ` **99 antenas**. Como ningún
+vehículo alcanzable necesita 99 antenas dedicadas, en la práctica el modelo
+**conecta a todos los que son físicamente alcanzables**, y los que quedan fuera
+son irreducibles (no ven ninguna candidata, ni directamente ni por multisalto).
+
+**Por qué 100 y no otro valor.** Medido sobre el mismo escenario (3691 pares,
+1649 candidatas, MaxR libre, tope 120 s), moviendo solo `penal_desconexion`:
+
+| `P[hmax]` | RSU | Cobertura | Motor | Paga hasta |
+|---|---|---|---|---|
+| 8 | 249 | 96,23 % | 76,3 s | 7 antenas |
+| **100** (actual) | **249** | **96,23 %** | **15,2 s** | **99 antenas** |
+| 1000 | 252 | 96,23 % | 1,0 s | 999 antenas |
+
+`100` es el punto donde coinciden las dos propiedades deseables:
+
+- **Con 8** la garantía es frágil: si en otro mapa un vehículo necesitara 8
+  antenas para ser alcanzado, el modelo lo abandonaría **sin avisar** — verías
+  menos cobertura y parecería que ese vehículo era imposible de conectar.
+- **Con 1000** sobra holgura: el margen del 0,01 % de `Z` crece con `Z`, y el
+  solver empieza a dejar antenas de más (252 en vez de 249) porque recortarlas ya
+  no le baja el objetivo lo suficiente.
+
+Además `100` resuelve **5 veces más rápido** que `8` dando la misma solución: con
+un objetivo tan pequeño, el solver tiene que pelear por cada antena.
+
+Análisis completo en [`explicaciones/medicion_y_afinado.pdf`](explicaciones/)
+(no versionado).
+
 ### Cómo cambiar la zona geográfica
 
 1. Levantar la app (API + `npm run dev`, ver [Instalación](#-instalación-y-ejecución)).
@@ -1251,7 +1586,7 @@ El backend usa ids de texto (`"V0"`, `"268824778"`) pero OPL trabaja con **conju
 
 ### El RSU artificial `r_inf` (garantiza factibilidad)
 
-El modelo exige que **toda la carga de cada vehículo se sirva** (restricción Ec. 2). Si un vehículo no alcanza ninguna RSU real, esa restricción sería infactible. Para evitarlo, a **cada vehículo presente en cada escenario** se le añade una tupla extra `<s, hmax, v, 0>`: la opción de "caer" en el RSU artificial `r_inf` (id 0) al salto `hmax = H+1`, con una **penalización enorme** (`P[hmax]`, por defecto 1000). Así el modelo siempre es factible y la desconexión solo se usa como último recurso.
+El modelo exige que **toda la carga de cada vehículo se sirva** (restricción Ec. 2). Si un vehículo no alcanza ninguna RSU real, esa restricción sería infactible. Para evitarlo, a **cada vehículo presente en cada escenario** se le añade una tupla extra `<s, hmax, v, 0>`: la opción de "caer" en el RSU artificial `r_inf` (id 0) al salto `hmax = H+1`, con una **penalización** (`P[hmax]`, ver [Los pesos del modelo](#pesos)). Así el modelo siempre es factible y la desconexión solo se usa como último recurso.
 
 ### Los conjuntos y parámetros que escribe
 
@@ -1259,15 +1594,15 @@ El modelo exige que **toda la carga de cada vehículo se sirva** (restricción E
 |-------------|--------|----------------|
 | `hmax` | Nº de saltos incl. desconexión | `H + 1` |
 | `rInf` | Id del RSU artificial | `0` |
-| `MaxR` | Máx. de RSU reales a desplegar | Parámetro (`--max-rsu`); default = nº de candidatos |
+| `MaxR` | Máx. de RSU reales a desplegar | Parámetro: casilla *"Limitar nº de RSU"* de la UI o `--max-rsu` en CLI; si no se da, **default = nº de candidatos** (no ata) — ver [MaxR desde la interfaz](#maxr) |
 | `R` | RSU candidatos (incluye `0`) | `{0}` ∪ RSU que aparecen en algún `CVR` |
 | `S` | Escenarios | Un id por instante |
 | `V` | Todos los vehículos | Unión de vehículos de todos los instantes |
 | `Vs[s]` | Vehículos presentes en `s` | `matrices_v2v[t]["vehiculos"]` |
-| `Cost[r]` | Costo de instalar `r` | `0` para `r_inf`; `1` cada RSU real (⇒ minimiza **cantidad**) |
-| `Cap[r]` | Capacidad de `r` | `r_inf` grande (1000); reales `cap_real` (100) |
+| `Cost[r]` | Costo de instalar `r` | `0` para `r_inf`; `10` cada RSU real (⇒ minimiza **cantidad**) |
+| `Cap[r]` | Capacidad de `r` | `cap_real` (300) para las reales; **`r_inf` no tiene restricción de capacidad** |
 | `P[1..hmax]` | Penalización por salto | `[1, 2, …, H, penal_desconexion]` |
-| `L[s][v]` | Carga de tráfico | `carga_default` (1) para todos |
+| `L[s][v]` | Carga de tráfico | `carga_default` (10) para todos |
 | `CVR` | Tuplas `<s,h,v,r>` | De las matrices `S_h` (ver arriba) + tuplas `r_inf` |
 
 > **Solo RSU conectados (por defecto).** Los RSU que **ningún** vehículo alcanza jamás son inútiles (el modelo nunca los elegiría) y solo inflan el archivo. Por eso, por defecto, `R` incluye solo los RSU que aparecen en al menos una tupla `CVR`. Con `--todos-los-rsu` se incluyen todos los candidatos. Es una reducción **sin pérdida** para el óptimo.
@@ -1458,21 +1793,137 @@ Puedes cambiar las posiciones (`COCHES`, `ANTENAS`, `EDIFICIOS`, `RADIO_OBU`) al
 
 ---
 
-## 🖥️ El frontend (`web/`)
+## 🖥️ El frontend (`web/`) — documentación detallada
 
-React + TypeScript + Vite. **react-leaflet** para el mapa. El diseño es una
-**consola científica/ingeniería** (fondo claro, un acento azul acero, verde
-semántico para "óptimo", datos en monoespaciada, marco tipo *plotter*).
+Frontend en **React + TypeScript + Vite**, con **react-leaflet** para el mapa. El
+diseño es una **consola científica/ingeniería** (fondo claro, un acento azul
+acero, verde semántico para "óptimo", datos en monoespaciada, marco tipo *plotter*).
 
-| Archivo | Rol |
-|---|---|
-| `src/api/client.ts` | Cliente HTTP **tipado**: una función por endpoint (`generate`, `filterRsu`, `simulate`, `connectivity`, `optimize`, `timesteps`, `tuplesV2i/v2v`, `multihop`) y las interfaces de sus respuestas. |
-| `src/App.tsx` | **Orquestador**: mantiene el estado (parámetros, escenario, RSU, KPIs, instante activo), define las acciones `generar / filtrar / simular / optimizar` (cada una llama a `client.ts` y actualiza el mapa y los KPIs), y controla la **reproducción** de la línea de tiempo. |
-| `src/components/ScenarioMap.tsx` | El mapa. `DrawRectangle` implementa la **selección del área por 2 clics** (sin leaflet-draw); `FitBounds` encuadra el escenario e invalida el tamaño para que no haya desalineo; las capas dibujan edificios (GeoJSON), RSU candidatas/desplegadas y, por instante, vehículos y enlaces V2I/V2V. |
-| `src/components/ResultsTabs.tsx` | Sección **Análisis**: tablas de tuplas V2I/V2V, rejillas binarias de las **matrices A/B** del instante y el **resumen multisalto** (pares alcanzables por salto + vehículos desconectados). |
-| `src/design/tokens.css` · `src/App.css` | Sistema de diseño y estilos de la consola. |
+### ¿Por qué dos procesos y por qué `uvicorn`?
 
-Más detalle y estado de la migración: [`web/README.md`](web/README.md).
+El frontend (React) **no hace la ciencia**: solo dibuja y recoge parámetros. Todo
+el cálculo pesado — correr SUMO, la línea de vista, el multisalto, resolver con
+CPLEX — ocurre en el **backend Python**, que se expone como una **API HTTP**. Esa
+API se sirve con **`uvicorn`**, el servidor que ejecuta aplicaciones FastAPI
+(*ASGI*). El comando `uvicorn api.main:app` significa: *"toma el objeto `app`
+(la instancia de FastAPI) definido en `api/main.py` y ponlo a escuchar peticiones"*.
+
+Por eso hay **dos procesos** que corren a la vez:
+
+```
+Navegador ──► Vite dev server (:5173) ──proxy /api──► uvicorn/FastAPI (:8000) ──► backend + optimizacion
+   React                (frontend)                          (API)                     (la ciencia)
+```
+
+En desarrollo, el servidor de Vite reenvía (*proxy*) toda ruta `/api` al backend en
+el puerto 8000, así que el frontend usa rutas relativas y no hay CORS.
+
+### Flujo de una acción (de un clic a un resultado)
+
+Ejemplo con **"Generar escenario"**:
+
+1. El usuario ajusta los *sliders* → se guardan en el estado `p` de React (`App.tsx`).
+2. Clic en el botón → llama a la acción `generar()`.
+3. `generar()` invoca `api.generate({bbox, num_vehiculos, tiempo_min})` de
+   `client.ts`, que hace `POST /api/scenario/generate` con esos datos en JSON.
+4. Vite proxya la petición al backend; FastAPI ejecuta OSM + SUMO + parseo y
+   responde con los edificios (en lat/lon) y los conteos.
+5. `generar()` guarda la respuesta en el estado (`setEdificios`, `setBounds`,
+   `setKpis`); React **re-renderiza** el mapa (nuevos polígonos) y los KPIs.
+
+Todos los botones siguen ese mismo patrón: *acción → `client.ts` → API → estado → re-render*.
+
+### `web/src/api/client.ts` — el cliente de la API
+
+Un único lugar para hablar con el backend. Define las **interfaces TypeScript** de
+cada respuesta (para tener autocompletado y detectar errores en compilación) y un
+objeto `api` con **una función por endpoint**. Todas pasan por el helper `req()`,
+que hace el `fetch`, verifica el estado HTTP y lanza un error legible si falla.
+
+| Función | Llama a | Para qué |
+|---|---|---|
+| `api.health()` | `GET /api/health` | Comprueba que el backend responde |
+| `api.state()` | `GET /api/state` | Qué hay cargado (no se usa al arrancar; ver nota) |
+| `api.buildings()` | `GET /api/scenario/buildings` | Edificios del escenario en lat/lon |
+| `api.generate(body)` | `POST /api/scenario/generate` | **M1**: genera el escenario con SUMO |
+| `api.filterRsu(body)` | `POST /api/rsu/filter` | Filtra las RSU candidatas |
+| `api.simulate(body)` | `POST /api/simulate` | **M2**: LoS + tuplas + matrices |
+| `api.timesteps()` | `GET /api/timesteps` | Instantes para la línea de tiempo |
+| `api.connectivity(t)` | `GET /api/connectivity?t=` | Vehículos + enlaces de un instante |
+| `api.optimize(body)` | `POST /api/optimize` | **M3**: resuelve el despliegue de RSU |
+| `api.tuplesV2i/​V2v(limit)` | `GET /api/tuples/…` | Tuplas para las tablas |
+| `api.multihop(t, H)` | `GET /api/multihop` | A, B, Rₕ, Sₕ, D_H, d de un instante |
+
+### `web/src/App.tsx` — el orquestador
+
+Es el "cerebro" de la interfaz. Contiene:
+
+- **Estado (`useState`):** los parámetros `p` (vehículos, duración, grado, radio…),
+  y los resultados (`edificios`, `candidatas`, `desplegadas`, `bounds`, `kpis`), más
+  el estado de la animación (`timesteps`, `tIdx`, `frame`, `playing`) y de la UI
+  (`busy`, `error`, `drawing`, `cobertura…`, `maxRsuOn`/`maxRsu`, `topeOn`/`tope`).
+- **Acciones** (una por paso del pipeline). Cada una envuelve su llamada en `run()`,
+  que pone el indicador *"⏳ …"*, captura errores y los muestra en un *banner*:
+  - `generar()` → `api.generate` → dibuja edificios y **limpia** la línea de tiempo
+    anterior (evita pedir conectividad de un escenario que ya no existe).
+  - `filtrar()` → `api.filterRsu` → pinta las **RSU candidatas (rojas)**.
+  - `simular()` → `api.simulate` → llena los KPIs y `cargarTimesteps()` (activa la
+    línea de tiempo).
+  - `optimizar()` → `api.optimize` → pinta las **RSU desplegadas (verdes)**. Envía
+    `max_rsu: <número>` si la casilla *"Limitar nº de RSU (MaxR)"* está encendida,
+    y `null` si no (comportamiento por defecto, sin límite efectivo); igual con
+    `limite_tiempo` y la casilla *"Limitar el tiempo del solver"* (`null` = sin
+    tope). Con la respuesta llena también los KPIs **Solver** y **Tiempo solver**
+    (ver [El límite de tiempo del solver](#solver)).
+
+Los KPIs admiten dos formas: un valor suelto (`"RSU desplegadas": 12`) o un objeto
+`{ value, sub, tone }` cuando hace falta subtítulo y color — así se pintan *Solver*
+(verde si el óptimo está demostrado, ámbar si se cortó por tiempo) y *Tiempo solver*.
+- **Reproducción (`useEffect`):** cuando `playing` es verdadero, un `setInterval`
+  avanza `tIdx` cada 700 ms y pide `api.connectivity(t)` de ese instante, guardando
+  el `frame` que el mapa dibuja.
+- `nuevoEscenario()`: reinicia todo el estado para empezar de cero (lo usan el botón
+  *"↺ Nuevo escenario"* y *"◱ Seleccionar área"*).
+- **Al arrancar** solo comprueba `api.health()`: la app abre **en blanco** para que
+  el usuario dibuje el área (no rehidrata el escenario precargado del backend).
+
+### `web/src/components/ScenarioMap.tsx` — el mapa
+
+Envuelve el `<MapContainer>` de react-leaflet (fondo CARTO claro) dentro del marco
+*plotter* (esquinas). Piezas:
+
+- **`DrawRectangle`** — selección del área **por dos clics** (sin `leaflet-draw`,
+  que se rompe con Leaflet moderno). Usa `useMapEvents`: el 1er clic fija una
+  esquina, el movimiento del ratón previsualiza el rectángulo, el 2º clic lo cierra
+  y entrega el `bbox` al `App`.
+- **`FitBounds`** — encuadra el mapa al escenario (`fitBounds`) y llama a
+  `invalidateSize()` tras el *layout* para que **los overlays no salgan
+  desalineados** en el primer render.
+- **Capas** (se dibujan según las props): edificios como una capa `GeoJSON`
+  (naranja), **RSU candidatas** (círculos rojos), **RSU desplegadas** (círculos
+  verdes), **cobertura** (círculos verdes discontinuos si se activa) y, por
+  instante, **vehículos** (azul) con sus **enlaces V2I** (verde) y **V2V** (ámbar).
+
+### `web/src/components/ResultsTabs.tsx` — la sección "Análisis"
+
+Pestañas ligadas al instante activo de la línea de tiempo. Carga los datos **bajo
+demanda** (solo pide a la API cuando abres la pestaña o cambia el instante):
+
+- **Tuplas V2I / V2V** — tablas con un **filtro de texto** (por vehículo, RSU o t).
+- **Matrices A/B** — usa `MatrixGrid` para pintar rejillas binarias 0/1: **A**
+  (vehículo×vehículo) y **B** (vehículo×RSU, solo las alcanzadas para que no explote
+  con cientos de RSU).
+- **Multisalto** — resumen por salto (pares alcanzables, vehículos conectados,
+  nuevos por salto) + aviso de desconectados, y un **selector** para ver las
+  matrices **Rₕ / Sₕ / D_H** del instante.
+
+### Diseño — `src/design/tokens.css` y `src/App.css`
+
+`tokens.css` define el sistema (paleta como variables CSS, tipografías, radios).
+`App.css` estila la consola (encabezado, *stepper*, paneles, marco del mapa, línea
+de tiempo, tarjetas KPI, tablas y rejillas). El objetivo es que **el color
+signifique algo**: azul = acento/acción, verde = óptimo/desplegado, rojo = RSU
+candidata, ámbar = V2V.
 
 ---
 
@@ -1538,15 +1989,24 @@ community) sólo soporta **Python 3.7–3.10**, y el backend necesita **≥ 3.10
 **3.10** es la única versión que corre ambas cosas. La licencia académica de IBM
 da el motor completo gratis.
 
-### Datos precargados
+### El escenario en `output/`
 
-El `output/` incluido corresponde a **una sola corrida** (red, FCD y edificios
-consistentes), así que la app arranca mostrando ese escenario y su animación es
-fiel. Para uno nuevo: dibuja un área y **Generar → Filtrar → Simular → Optimizar**.
+`output/` **no se versiona** (ver [Estructura del proyecto](#-estructura-del-proyecto)):
+son artefactos generados que pesaban 137 MB. Tras clonar el repositorio la carpeta
+no existe, y la app arranca **en blanco** — que es su comportamiento normal.
+
+Para crear un escenario: dibuja un área en el mapa y pulsa
+**Generar → Filtrar → Simular → Optimizar**. La API crea `output/` sola.
+
+Si ya existe un `output/` en local, la API lo **carga al arrancar** y lo puedes
+retomar sin regenerarlo (todos sus archivos son de una misma corrida, así que la
+animación es fiel).
 
 ### Limitaciones y trabajo futuro
 
 - Un escenario a la vez en memoria (herramienta de un usuario).
+- Los tiempos del cronómetro se imprimen **solo en la consola** del backend y
+  viven en la memoria del proceso: reiniciar `uvicorn` borra la sesión de medición.
 - Extensiones: filtros en las tablas de tuplas, círculos de cobertura de RSU,
   integración con NS-3 para simular protocolos VANET.
 

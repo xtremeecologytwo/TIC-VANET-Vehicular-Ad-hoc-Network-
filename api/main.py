@@ -42,6 +42,7 @@ from backend.visibilidad import (
 from backend.exportar_dat import exportar_dat_desde_memoria
 from backend.multisalto import analizar_timestep
 from optimizacion.optimizar_rsu import optimizar
+from api import cronometro as cron
 
 
 # ============================================================
@@ -186,7 +187,15 @@ class SimReq(BaseModel):
 
 class OptReq(BaseModel):
     H: int = Field(3, ge=1, le=6)
-    max_rsu: int | None = None
+    # MaxR del modelo: nº máximo de RSU que se pueden desplegar. `null` (por
+    # defecto) = sin límite efectivo; `exportar_dat` lo fija al nº de RSU
+    # candidatas, con lo que la restricción existe pero nunca ata.
+    max_rsu: int | None = Field(None, ge=1)
+    # Límite de tiempo del solver, en segundos. `null` = SIN LÍMITE: CPLEX busca
+    # hasta demostrar el óptimo, tarde lo que tarde (la petición HTTP queda
+    # esperando todo ese rato). Con un número, al agotarlo devuelve la mejor
+    # solución encontrada en vez de seguir probando optimalidad.
+    limite_tiempo: float | None = Field(60, ge=5, le=3600)
 
 
 # ============================================================
@@ -223,37 +232,50 @@ def scenario_buildings():
 def scenario_generate(req: ScenarioReq):
     """M1 — descarga OSM, corre SUMO y extrae junctions + edificios."""
     b = req.bbox
-    osm_path, err = descargar_mapa_osm(b.min_lon, b.min_lat, b.max_lon, b.max_lat, OUTPUT_DIR)
-    if err:
-        raise HTTPException(400, f"Descarga OSM: {err}")
+    # Un escenario nuevo abre una sesión de medición nueva: los tiempos de las
+    # etapas siguientes se acumulan sobre esta corrida (ver api/cronometro.py).
+    cron.nueva_sesion(f"escenario nuevo · {req.num_vehiculos} vehiculos · "
+                      f"{req.tiempo_min} min")
+    with cron.etapa("M1 - Generar escenario"):
+        with cron.subetapa("Descarga OSM"):
+            osm_path, err = descargar_mapa_osm(b.min_lon, b.min_lat,
+                                               b.max_lon, b.max_lat, OUTPUT_DIR)
+        if err:
+            raise HTTPException(400, f"Descarga OSM: {err}")
 
-    periodo = (req.tiempo_min * 60) / req.num_vehiculos
-    pasos = ejecutar_pipeline_sumo(osm_path, OUTPUT_DIR,
-                                   num_vehiculos=req.num_vehiculos, periodo_salida=periodo)
-    if any(not p["exito"] for p in pasos):
-        fallo = next(p for p in pasos if not p["exito"])
-        raise HTTPException(500, f"SUMO ({fallo['paso']}): {fallo['mensaje']}")
+        periodo = (req.tiempo_min * 60) / req.num_vehiculos
+        with cron.subetapa("SUMO (netconvert/polyconvert/trips)"):
+            pasos = ejecutar_pipeline_sumo(osm_path, OUTPUT_DIR,
+                                           num_vehiculos=req.num_vehiculos,
+                                           periodo_salida=periodo)
+        if any(not p["exito"] for p in pasos):
+            fallo = next(p for p in pasos if not p["exito"])
+            raise HTTPException(500, f"SUMO ({fallo['paso']}): {fallo['mensaje']}")
 
-    net = os.path.join(OUTPUT_DIR, "mapa.net.xml")
-    poly = os.path.join(OUTPUT_DIR, "mapa.poly.xml")
-    junctions, ej = parsear_junctions(net, OUTPUT_DIR)
-    edificios, ee = parsear_edificios(poly, OUTPUT_DIR)
-    if ej or ee:
-        raise HTTPException(500, f"Parseo: {ej or ee}")
+        net = os.path.join(OUTPUT_DIR, "mapa.net.xml")
+        poly = os.path.join(OUTPUT_DIR, "mapa.poly.xml")
+        with cron.subetapa("Parseo junctions + edificios"):
+            junctions, ej = parsear_junctions(net, OUTPUT_DIR)
+            edificios, ee = parsear_edificios(poly, OUTPUT_DIR)
+        if ej or ee:
+            raise HTTPException(500, f"Parseo: {ej or ee}")
 
-    STATE.update({
-        "junctions": junctions, "edificios": edificios,
-        "proy": obtener_proyeccion(net), "net_xml": net,
-        "bbox": [b.min_lon, b.min_lat, b.max_lon, b.max_lat],
-        "rsus": None, "datos_fcd": None, "tuplas_v2i": None,
-        "matrices_v2v": None, "tuplas_v2v": None,
-        "params": {"num_vehiculos": req.num_vehiculos, "tiempo_min": req.tiempo_min},
-    })
-    return {
-        "n_junctions": len(junctions), "n_edificios": len(edificios),
-        "edificios": _edificios_geojson(), "bounds": _bounds(),
-        "pasos": [{"paso": p["paso"], "exito": p["exito"], "mensaje": p["mensaje"]} for p in pasos],
-    }
+        STATE.update({
+            "junctions": junctions, "edificios": edificios,
+            "proy": obtener_proyeccion(net), "net_xml": net,
+            "bbox": [b.min_lon, b.min_lat, b.max_lon, b.max_lat],
+            "rsus": None, "datos_fcd": None, "tuplas_v2i": None,
+            "matrices_v2v": None, "tuplas_v2v": None,
+            "params": {"num_vehiculos": req.num_vehiculos, "tiempo_min": req.tiempo_min},
+        })
+        with cron.subetapa("Conversion a lat/lon (respuesta)"):
+            respuesta = {
+                "n_junctions": len(junctions), "n_edificios": len(edificios),
+                "edificios": _edificios_geojson(), "bounds": _bounds(),
+                "pasos": [{"paso": p["paso"], "exito": p["exito"],
+                           "mensaje": p["mensaje"]} for p in pasos],
+            }
+    return respuesta
 
 
 @app.post("/api/rsu/filter")
@@ -261,15 +283,20 @@ def rsu_filter(req: RsuReq):
     """M1 — filtra las junctions a RSU candidatas (grado + clustering)."""
     if STATE["junctions"] is None:
         raise HTTPException(409, "Genera un escenario primero.")
-    rsus = filtrar_junctions_rsu(STATE["junctions"], STATE["net_xml"],
-                                 min_grado=req.min_grado, radio_cluster=req.radio_cluster)
-    STATE["rsus"] = rsus
-    n_orig = len(STATE["junctions"])
-    return {
-        "rsus": _rsus_geojson(rsus),
-        "n_candidatas": len(rsus), "n_junctions": n_orig,
-        "reduccion_pct": round(100 * (1 - len(rsus) / max(n_orig, 1)), 1),
-    }
+    with cron.etapa(f"Filtrar RSU candidatas (grado>={req.min_grado}, "
+                    f"cluster={req.radio_cluster:g} m)"):
+        with cron.subetapa("Grado + clustering espacial"):
+            rsus = filtrar_junctions_rsu(STATE["junctions"], STATE["net_xml"],
+                                         min_grado=req.min_grado,
+                                         radio_cluster=req.radio_cluster)
+        STATE["rsus"] = rsus
+        n_orig = len(STATE["junctions"])
+        respuesta = {
+            "rsus": _rsus_geojson(rsus),
+            "n_candidatas": len(rsus), "n_junctions": n_orig,
+            "reduccion_pct": round(100 * (1 - len(rsus) / max(n_orig, 1)), 1),
+        }
+    return respuesta
 
 
 @app.post("/api/simulate")
@@ -280,28 +307,35 @@ def simulate(req: SimReq):
 
     tiempo_sim = STATE["params"].get("tiempo_min", 120) * 60
     step = req.step_min * 60.0
-    fcd_path, err = ejecutar_simulacion_sumo(OUTPUT_DIR, tiempo_sim, periodo_fcd=step)
-    if err:
-        raise HTTPException(500, f"Simulación SUMO: {err}")
-    datos_fcd, ef = parsear_fcd(fcd_path, step)
-    if ef:
-        raise HTTPException(500, f"Parseo FCD: {ef}")
+    with cron.etapa(f"M2 - Simular conectividad (radio {req.radio_obu:g} m, "
+                    f"muestreo {req.step_min} min)"):
+        with cron.subetapa("Simulacion SUMO (trafico + FCD)"):
+            fcd_path, err = ejecutar_simulacion_sumo(OUTPUT_DIR, tiempo_sim,
+                                                     periodo_fcd=step)
+        if err:
+            raise HTTPException(500, f"Simulación SUMO: {err}")
+        with cron.subetapa("Parseo del FCD"):
+            datos_fcd, ef = parsear_fcd(fcd_path, step)
+        if ef:
+            raise HTTPException(500, f"Parseo FCD: {ef}")
 
-    tuplas_v2i, est_v2i = generar_tuplas_visibilidad(
-        datos_fcd, STATE["rsus"], STATE["edificios"], radio_obu=req.radio_obu)
-    guardar_tuplas_json(tuplas_v2i, est_v2i, STATE["rsus"], OUTPUT_DIR)
+        with cron.subetapa("LoS V2I (tuplas de visibilidad)"):
+            tuplas_v2i, est_v2i = generar_tuplas_visibilidad(
+                datos_fcd, STATE["rsus"], STATE["edificios"], radio_obu=req.radio_obu)
+            guardar_tuplas_json(tuplas_v2i, est_v2i, STATE["rsus"], OUTPUT_DIR)
 
-    tuplas_v2v, matrices_v2v, est_v2v = generar_tuplas_v2v(
-        datos_fcd, STATE["edificios"], radio_obu=req.radio_obu,
-        bidireccional=req.bidireccional)
-    guardar_tuplas_v2v_json(tuplas_v2v, matrices_v2v, est_v2v, OUTPUT_DIR)
+        with cron.subetapa("LoS V2V (matriz A por instante)"):
+            tuplas_v2v, matrices_v2v, est_v2v = generar_tuplas_v2v(
+                datos_fcd, STATE["edificios"], radio_obu=req.radio_obu,
+                bidireccional=req.bidireccional)
+            guardar_tuplas_v2v_json(tuplas_v2v, matrices_v2v, est_v2v, OUTPUT_DIR)
 
-    STATE.update({
-        "datos_fcd": datos_fcd, "tuplas_v2i": tuplas_v2i,
-        "matrices_v2v": matrices_v2v, "tuplas_v2v": tuplas_v2v,
-        "params": {**STATE["params"], "radio_obu": req.radio_obu,
-                   "step_min": req.step_min, "bidireccional": req.bidireccional},
-    })
+        STATE.update({
+            "datos_fcd": datos_fcd, "tuplas_v2i": tuplas_v2i,
+            "matrices_v2v": matrices_v2v, "tuplas_v2v": tuplas_v2v,
+            "params": {**STATE["params"], "radio_obu": req.radio_obu,
+                       "step_min": req.step_min, "bidireccional": req.bidireccional},
+        })
     timesteps = sorted(float(t) for t in datos_fcd.keys())
     return {
         "v2i": {"total_tuplas": est_v2i["total_tuplas"],
@@ -372,24 +406,111 @@ def optimize(req: OptReq):
     if STATE["matrices_v2v"] is None or STATE["tuplas_v2i"] is None:
         raise HTTPException(409, "Corre la simulación primero.")
     dat = os.path.join(RAIZ, "optimizacion", "rsu_backend.dat")
-    datos = exportar_dat_desde_memoria(
-        STATE["matrices_v2v"], STATE["tuplas_v2i"], STATE["rsus"], dat,
-        H=req.H, max_rsu=req.max_rsu, solo_rsu_conectados=True)
-    res = optimizar(datos, mostrar_log=False)
+    # MaxR: si el frontend no manda número, `exportar_dat` usa el nº de RSU
+    # candidatas conectadas, con lo que la restricción no ata (comportamiento
+    # por defecto). El nombre de la etapa deja constancia de cuál se midió.
+    etiqueta_maxr = "sin limite" if req.max_rsu is None else str(req.max_rsu)
+    etiqueta_lim = ("sin limite" if req.limite_tiempo is None
+                    else f"{req.limite_tiempo:g} s")
+    with cron.etapa(f"M3 - Optimizar despliegue (H={req.H}, MaxR={etiqueta_maxr}, "
+                    f"tope={etiqueta_lim})"):
+        with cron.subetapa("Multisalto + construccion del CVR (.dat)"):
+            datos = exportar_dat_desde_memoria(
+                STATE["matrices_v2v"], STATE["tuplas_v2i"], STATE["rsus"], dat,
+                H=req.H, max_rsu=req.max_rsu, solo_rsu_conectados=True)
+        with cron.subetapa("Solver CPLEX (branch & bound)") as medida:
+            res = optimizar(datos, mostrar_log=False,
+                            limite_tiempo=req.limite_tiempo)
+        # Tiempo del MOTOR (sin el armado del modelo): es el que hay que
+        # comparar contra el límite. Si docplex no lo diera, cae al reloj.
+        seg_motor = res.get("segundos_solver")
+        if seg_motor is None:
+            seg_motor = medida.segundos
+        # Cómo terminó el solver: lo necesita el frontend para saber si el
+        # tiempo medido es real o es simplemente el límite que se le puso.
+        info = _interpretar_status(res["status"], seg_motor, req.limite_tiempo)
+        cron.nota(f"status: {res['status']} -> {info['etiqueta']}; "
+                  f"motor {seg_motor:.2f} s de un tope de {etiqueta_lim}")
 
-    desplegadas = []
-    if res["objetivo"] is not None:
-        ids = set(str(r) for r in res["seleccionados_backend"])
-        desplegadas = [r for r in _rsus_geojson(STATE["rsus"]) if r["id"] in ids]
+        desplegadas = []
+        if res["objetivo"] is not None:
+            ids = set(str(r) for r in res["seleccionados_backend"])
+            desplegadas = [r for r in _rsus_geojson(STATE["rsus"]) if r["id"] in ids]
 
-    return {
-        "resumen": datos["resumen"],
-        "objetivo": res["objetivo"],
-        "n_desplegadas": res["n_rsu_elegidos"],
-        "status": res["status"],
-        "desplegadas": desplegadas,
-        "candidatas": _rsus_geojson(STATE["rsus"]),
-    }
+        rep = res.get("reparto")
+        if rep:
+            cron.nota(f"cobertura: {rep['cobertura_pct']:.2f} % "
+                      f"({rep['conectados']:.0f}/{rep['n_pares']} pares) | "
+                      f"directos {rep['directos']:.0f} | "
+                      f"multisalto {rep['multisalto']:.0f} | "
+                      f"desconectados {rep['desconectados']:.0f}")
+
+        respuesta = {
+            "resumen": datos["resumen"],
+            "objetivo": res["objetivo"],
+            "n_desplegadas": res["n_rsu_elegidos"],
+            "status": res["status"],
+            "cobertura": rep,
+            "solver": {
+                "status": res["status"],
+                "segundos": round(float(seg_motor), 2),        # solo el motor
+                "segundos_total": round(medida.segundos, 2),   # armado + motor
+                "limite_tiempo": req.limite_tiempo,
+                **info,
+            },
+            "desplegadas": desplegadas,
+            "candidatas": _rsus_geojson(STATE["rsus"]),
+        }
+    # Fin del flujo M1→M3: imprime la tabla con la suma de todas las etapas.
+    cron.resumen()
+    return respuesta
+
+
+def _interpretar_status(status: str, segundos: float, limite: float | None) -> dict:
+    """
+    Traduce el `status` crudo de CPLEX a algo que se pueda leer en la interfaz.
+
+    CPLEX devuelve frases como "integer optimal solution" o "time limit
+    exceeded". Lo que le importa a quien mira la pantalla es una sola cosa:
+    ¿el resultado está **demostrado** como el mejor, o el solver se quedó sin
+    tiempo y entregó lo mejor que había encontrado?
+
+    Parámetros:
+        status: cadena tal cual la devuelve `optimizar()`.
+        segundos: lo que tardó realmente el solver (medido con el cronómetro).
+        limite: el `limite_tiempo` que se le pasó a CPLEX (None = sin límite).
+
+    Retorna:
+        dict con "etiqueta" (frase corta), "detalle" (qué significa),
+        "optimo" (bool) y "corto_por_tiempo" (bool).
+    """
+    s = (status or "").lower()
+    optimo = "optimal" in s
+    # CPLEX dice "time limit exceeded"; como red de seguridad, si el solver
+    # consumió prácticamente todo el presupuesto sin declararse óptimo, se
+    # trata igual (el reloj mandó, no la dificultad real del problema).
+    corto = ("time limit" in s) or (
+        limite is not None and not optimo and segundos >= limite * 0.97)
+
+    if optimo:
+        etiqueta = "Óptimo demostrado"
+        detalle = ("CPLEX terminó solo: no existe un despliegue mejor."
+                   if "tolerance" not in s else
+                   "CPLEX terminó solo, dentro de su tolerancia estándar (0,01 %).")
+    elif corto:
+        etiqueta = "Cortado por tiempo"
+        tope = f"el límite de {limite:g} s" if limite is not None else "el tiempo"
+        detalle = (f"Agotó {tope}. La solución sirve, pero podría existir "
+                   f"una mejor.")
+    elif "community-limit-exceeded" in s:
+        etiqueta = "Modelo demasiado grande"
+        detalle = "Falta el motor completo de CPLEX Studio (la edición Community no basta)."
+    else:
+        etiqueta = status or "sin solución"
+        detalle = "El solver no devolvió una solución utilizable."
+
+    return {"etiqueta": etiqueta, "detalle": detalle,
+            "optimo": optimo, "corto_por_tiempo": corto}
 
 
 @app.get("/api/tuples/v2i")

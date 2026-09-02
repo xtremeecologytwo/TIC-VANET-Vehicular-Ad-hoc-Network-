@@ -69,6 +69,8 @@ export default function ResultsTabs({ t, H }: { t: number | null; H: number }) {
   useEffect(() => { if (tab === "v2i" && !v2i) api.tuplesV2i().then(setV2i).catch((e) => setErr(e.message)); }, [tab, v2i]);
   useEffect(() => { if (tab === "v2v" && !v2v) api.tuplesV2v().then(setV2v).catch((e) => setErr(e.message)); }, [tab, v2v]);
   useEffect(() => {
+    // Las matrices siguen a la línea de tiempo: se piden para el instante activo
+    // (también mientras se reproduce, para ver qué matriz se usa en cada momento).
     if ((tab === "mat" || tab === "mh") && t != null) {
       setErr(null);
       api.multihop(t, H).then((r) => { setMh(r); setMhMat(`R${r.H}`); }).catch((e) => setErr(e.message));

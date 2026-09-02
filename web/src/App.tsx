@@ -41,15 +41,37 @@ function Slider({ label, value, min, max, step = 1, unit = "", onChange }: {
   );
 }
 
+/** Campo numérico escribible (para valores exactos, como MaxR o el tope del solver). */
+function Num({ label, value, min, max, onChange }: {
+  label: string; value: number; min: number; max: number; onChange: (v: number) => void;
+}) {
+  return (
+    <label className="field num">
+      <span>{label}</span>
+      <input type="number" className="mono" min={min} max={max} value={value}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          if (Number.isFinite(v)) onChange(Math.min(max, Math.max(min, Math.round(v))));
+        }} />
+    </label>
+  );
+}
+
 function Tile({ label, value, sub, tone }: { label: string; value: string | number; sub?: string; tone?: "ok" | "warn" }) {
+  // Los valores de texto largo (p. ej. "Cortado por tiempo") no caben con el
+  // cuerpo grande de los números: se muestran en un tamaño menor.
+  const texto = typeof value === "string" && value.length > 9;
   return (
     <div className={`tile ${tone ?? ""}`}>
       <div className="lab">{label}</div>
-      <div className="num mono">{value}</div>
+      <div className={`num mono ${texto ? "txt" : ""}`}>{value}</div>
       {sub && <div className="sub">{sub}</div>}
     </div>
   );
 }
+
+/** Un KPI puede ser un valor suelto o llevar subtítulo y color. */
+type Kpi = string | number | { value: string | number; sub?: string; tone?: "ok" | "warn" };
 
 /* ---------- app ---------- */
 
@@ -62,7 +84,7 @@ export default function App() {
   const [candidatas, setCandidatas] = useState<Rsu[] | null>(null);
   const [desplegadas, setDesplegadas] = useState<Rsu[] | null>(null);
   const [bounds, setBounds] = useState<[LatLon, LatLon] | null>(null);
-  const [kpis, setKpis] = useState<Record<string, string | number>>({});
+  const [kpis, setKpis] = useState<Record<string, Kpi>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activo, setActivo] = useState(1);
@@ -74,6 +96,14 @@ export default function App() {
   const [drawing, setDrawing] = useState(false);
   const [coberturaOn, setCoberturaOn] = useState(false);
   const [coberturaR, setCoberturaR] = useState(200);
+  // MaxR: límite del nº de RSU desplegables. Apagado = como estaba (el backend
+  // lo fija al nº de RSU candidatas, así que la restricción no ata).
+  const [maxRsuOn, setMaxRsuOn] = useState(false);
+  const [maxRsu, setMaxRsu] = useState(50);
+  // Tope de tiempo del solver. Apagado = sin límite: CPLEX busca hasta demostrar
+  // el óptimo (la petición se queda esperando todo ese rato).
+  const [topeOn, setTopeOn] = useState(true);
+  const [tope, setTope] = useState(60);
 
   const set = (k: keyof typeof DEF) => (v: number) => setP((s) => ({ ...s, [k]: v }));
 
@@ -143,11 +173,49 @@ export default function App() {
   });
 
   const optimizar = () => run("Optimizando despliegue", async () => {
-    const r = await api.optimize({ H: p.H, max_rsu: null });
+    const r = await api.optimize({
+      H: p.H,
+      max_rsu: maxRsuOn ? maxRsu : null,
+      limite_tiempo: topeOn ? tope : null,
+    });
     setCandidatas(r.candidatas); setDesplegadas(r.desplegadas);
+    const s = r.solver;
+    const c = r.cobertura;
     setKpis((k) => ({
-      ...k, Objetivo: r.objetivo ?? "—", "RSU desplegadas": r.n_desplegadas,
+      ...k, Objetivo: r.objetivo != null ? r.objetivo.toFixed(1) : "—",
+      "RSU desplegadas": r.n_desplegadas,
       "Tuplas CVR": r.resumen.n_tuplas_CVR,
+      // La métrica del proyecto: qué fracción de los pares (instante, vehículo)
+      // queda comunicada, y cuántos de ellos gracias al multisalto V2V.
+      ...(c ? {
+        Cobertura: {
+          value: `${c.cobertura_pct.toFixed(2)} %`,
+          sub: `${c.conectados.toFixed(0)} de ${c.n_pares} pares (instante, vehículo)`,
+          tone: "ok" as const,
+        },
+        Desconectados: {
+          value: c.desconectados.toFixed(0),
+          sub: `${(100 - c.cobertura_pct).toFixed(2)} % sin cobertura`,
+          tone: c.desconectados > 0 ? ("warn" as const) : undefined,
+        },
+        Multisalto: {
+          value: c.multisalto.toFixed(0),
+          sub: `vía V2V · ${c.directos.toFixed(0)} directos a RSU`,
+        },
+      } : {}),
+      MaxR: maxRsuOn ? maxRsu : `sin límite (${r.resumen.max_rsu})`,
+      // Cómo terminó el solver y cuánto tardó: si topó el límite, el tiempo
+      // medido es el del reloj, no el que costó realmente el problema.
+      Solver: { value: s.etiqueta, sub: s.detalle, tone: s.optimo ? "ok" : "warn" },
+      "Tiempo solver": {
+        value: `${s.segundos.toFixed(1)} s`,
+        sub: s.limite_tiempo == null
+          ? "sin límite de tiempo"
+          : s.corto_por_tiempo
+            ? `topó el límite de ${s.limite_tiempo} s`
+            : `de un límite de ${s.limite_tiempo} s`,
+        tone: s.corto_por_tiempo ? "warn" : undefined,
+      },
     }));
     setActivo(3);
   });
@@ -261,6 +329,36 @@ export default function App() {
 
             <div className="grouplabel">M3 · Optimización</div>
             <Slider label="Saltos H" value={p.H} min={1} max={6} onChange={set("H")} />
+            <label className="chk">
+              <input type="checkbox" checked={maxRsuOn}
+                onChange={(e) => setMaxRsuOn(e.target.checked)} />
+              Limitar nº de RSU (MaxR)
+            </label>
+            {maxRsuOn && (
+              <Num label="MaxR — RSU máximas" value={maxRsu} min={1}
+                max={candidatas?.length ?? 1000} onChange={setMaxRsu} />
+            )}
+            <p className="hint">
+              {maxRsuOn
+                ? `El modelo podrá desplegar como máximo ${maxRsu} RSU.`
+                : "Sin límite: el modelo puede usar todas las RSU candidatas."}
+            </p>
+
+            <label className="chk">
+              <input type="checkbox" checked={topeOn}
+                onChange={(e) => setTopeOn(e.target.checked)} />
+              Limitar el tiempo del solver
+            </label>
+            {topeOn && (
+              <Num label="Tope del solver (s)" value={tope} min={5} max={3600}
+                onChange={setTope} />
+            )}
+            <p className="hint">
+              {topeOn
+                ? `Si CPLEX no termina en ${tope} s, devuelve la mejor solución que haya encontrado.`
+                : "Sin límite: CPLEX busca hasta demostrar el óptimo. Puede tardar mucho y la app queda esperando."}
+            </p>
+
             <button className="cta ok" disabled={!!busy || timesteps.length === 0} onClick={optimizar}>◉ Optimizar despliegue</button>
           </div>
         </div>
@@ -271,10 +369,13 @@ export default function App() {
         <>
           <div className="section-h"><span className="k">Resultados</span><span className="rule" /></div>
           <div className="tiles">
-            {kpiEntries.map(([k, v]) => (
-              <Tile key={k} label={k} value={v}
-                tone={k === "Objetivo" || k === "RSU desplegadas" ? "ok" : undefined} />
-            ))}
+            {kpiEntries.map(([k, v]) => {
+              const o = typeof v === "object" ? v : { value: v, sub: undefined, tone: undefined };
+              return (
+                <Tile key={k} label={k} value={o.value} sub={o.sub}
+                  tone={o.tone ?? (k === "Objetivo" || k === "RSU desplegadas" ? "ok" : undefined)} />
+              );
+            })}
           </div>
         </>
       )}

@@ -189,6 +189,15 @@ def optimizar(datos: dict, mostrar_log: bool = False,
           "seleccionados_backend": [ids reales del backend] (usa el mapa inverso),
           "status": estado del solver (str),
           "n_rsu_elegidos": int,
+          "segundos_solver": tiempo que CPLEX dedicó a resolver (float|None).
+              Es el tiempo del MOTOR, sin contar el armado del modelo; es el
+              que hay que comparar contra `limite_tiempo` para saber si el
+              solver topó el tope o terminó por su cuenta.
+          "reparto": cómo quedó servida la demanda (None si no hubo solución):
+              {"n_pares", "conectados", "desconectados", "cobertura_pct",
+               "directos", "multisalto", "por_salto"}.
+              Un "par" es un (escenario, vehículo); la COBERTURA es la fracción
+              que NO cae en el RSU artificial r_inf.
     """
     mdl, Sel, Rts = construir_modelo(datos)
 
@@ -219,6 +228,8 @@ def optimizar(datos: dict, mostrar_log: bool = False,
                 "el problema (--max-rsu menor, menos escenarios, o prueba --micro)."
             ),
             "n_rsu_elegidos": 0,
+            "segundos_solver": None,
+            "reparto": None,
         }
 
     if sol is None:
@@ -228,12 +239,42 @@ def optimizar(datos: dict, mostrar_log: bool = False,
             "seleccionados_backend": [],
             "status": mdl.solve_details.status if mdl.solve_details else "sin solución",
             "n_rsu_elegidos": 0,
+            "segundos_solver": mdl.solve_details.time if mdl.solve_details else None,
+            "reparto": None,
         }
 
     rInf = datos["rInf"]
-    seleccionados = sorted(
-        r for r in datos["R"] if r != rInf and sol.get_value(Sel[r]) > 0.5
-    )
+    hmax = datos["hmax"]
+    n_pares = sum(len(datos["Vs"][s]) for s in datos["S"])
+
+    def _leer(solucion):
+        """Extrae de una solución los RSU elegidos y el reparto de la carga."""
+        elegidos = sorted(
+            r for r in datos["R"] if r != rInf and solucion.get_value(Sel[r]) > 0.5
+        )
+        # Cada par (escenario, vehículo) se sirve a través de algún salto h. El
+        # salto hmax es la desconexión (cae en r_inf), así que la COBERTURA es
+        # todo lo que NO acaba ahí. Es la métrica que mide el objetivo del
+        # proyecto: cuántos vehículos quedan comunicados.
+        carga_por_h = defaultdict(float)
+        for t in datos["CVR"]:
+            val = solucion.get_value(Rts[t])
+            if val > 1e-9:
+                carga_por_h[t[1]] += val
+        desconectados = carga_por_h.get(hmax, 0.0)
+        conectados = n_pares - desconectados
+        rep = {
+            "n_pares": n_pares,
+            "conectados": conectados,
+            "desconectados": desconectados,
+            "cobertura_pct": (100.0 * conectados / n_pares) if n_pares else 0.0,
+            "directos": carga_por_h.get(1, 0.0),
+            "multisalto": sum(v for h, v in carga_por_h.items() if 1 < h < hmax),
+            "por_salto": {h: carga_por_h[h] for h in sorted(carga_por_h)},
+        }
+        return elegidos, rep
+
+    seleccionados, reparto = _leer(sol)
 
     # Mapa entero_OPL -> id_backend para reportar RSU reales
     int_a_rsu = datos.get("mapas", {}).get("int_a_rsu", {})
@@ -245,6 +286,8 @@ def optimizar(datos: dict, mostrar_log: bool = False,
         "seleccionados_backend": seleccionados_backend,
         "status": mdl.solve_details.status,
         "n_rsu_elegidos": len(seleccionados),
+        "segundos_solver": mdl.solve_details.time,
+        "reparto": reparto,
     }
 
 

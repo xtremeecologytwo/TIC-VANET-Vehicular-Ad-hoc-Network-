@@ -116,9 +116,9 @@ def _construir_mapa_rsu(rsu_ids: list) -> tuple[dict, dict]:
 
 def construir_datos_opl(matrices_v2v: dict, tuplas_v2i: list, rsu_ids: list,
                         H: int = 3, max_rsu: int | None = None,
-                        cap_real: float = 100.0, cap_inf: float = 1000.0,
-                        penal_desconexion: float = 1000.0,
-                        carga_default: float = 1.0,
+                        cap_real: float = 300.0, cap_inf: float = 10000.0,
+                        penal_desconexion: float = 100.0,
+                        carga_default: float = 10.0,
                         forzar_simetria: bool = True,
                         solo_rsu_conectados: bool = True,
                         timesteps: list | None = None) -> dict:
@@ -236,7 +236,11 @@ def construir_datos_opl(matrices_v2v: dict, tuplas_v2i: list, rsu_ids: list,
     Cost = {r_inf: 0.0}
     Cap = {r_inf: cap_inf}
     for r in rsu_reales:
-        Cost[r] = 1.0        # cada RSU real cuesta 1 -> minimizar CANTIDAD
+        # Todas las RSU reales cuestan lo mismo, así que minimizar el coste de
+        # instalación equivale a minimizar la CANTIDAD de antenas. El valor
+        # importa por su relación con P[hmax]: (P[hmax]-P_h)*L/Cost es cuántas
+        # antenas paga el modelo por rescatar un vehículo-instante.
+        Cost[r] = 10.0
         Cap[r] = cap_real
 
     # ---- Penalización por saltos P[1..hmax] ----
