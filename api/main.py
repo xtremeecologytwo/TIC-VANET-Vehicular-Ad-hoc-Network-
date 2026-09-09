@@ -29,6 +29,7 @@ if RAIZ not in sys.path:
 OUTPUT_DIR = os.path.join(RAIZ, "output")
 
 from backend.descargar_osm import descargar_mapa_osm
+from backend.procesos import cancelar_todo
 from backend.sumo_pipeline import ejecutar_pipeline_sumo
 from backend.parsear_xml import (
     parsear_junctions, parsear_edificios, obtener_proyeccion,
@@ -78,10 +79,23 @@ def _ll(x, y):
     return [round(lat, 6), round(lon, 6)]
 
 
+# Tope opcional de edificios enviados al navegador para DIBUJAR.
+# Por defecto 0 = SIN TOPE: se mandan todos, que es lo que hace que el mapa se
+# vea completo. Con áreas muy grandes (~190 000 polígonos, ~53 MB de JSON) el
+# navegador puede ir lento; si eso molesta, poner aquí un número activa un
+# muestreo uniforme. NUNCA afecta al cálculo: la línea de vista usa siempre el
+# conjunto completo del backend.
+MAX_EDIFICIOS_MAPA = int(os.environ.get("MAX_EDIFICIOS_MAPA", 0))
+
+
 def _edificios_geojson():
     """Edificios como lista de anillos [[lat,lon], ...] para el mapa."""
-    return [[_ll(px, py) for px, py in verts]
-            for verts in (STATE["edificios"] or {}).values() if len(verts) >= 3]
+    todos = [v for v in (STATE["edificios"] or {}).values() if len(v) >= 3]
+    # Muestreo uniforme (uno de cada k) solo si se pidió un tope explícito.
+    if MAX_EDIFICIOS_MAPA and len(todos) > MAX_EDIFICIOS_MAPA:
+        paso = len(todos) // MAX_EDIFICIOS_MAPA + 1
+        todos = todos[::paso]
+    return [[_ll(px, py) for px, py in verts] for verts in todos]
 
 
 def _rsus_geojson(rsus):
@@ -170,8 +184,11 @@ class BBox(BaseModel):
 
 class ScenarioReq(BaseModel):
     bbox: BBox
-    num_vehiculos: int = Field(100, ge=5, le=1000)
-    tiempo_min: int = Field(120, ge=1, le=180)
+    # Topes altos a propósito: el cuello de botella real no es la API sino
+    # SUMO y el cálculo de línea de vista. Ver el README para qué esperar
+    # a partir de unos miles de vehículos.
+    num_vehiculos: int = Field(100, ge=5, le=1_000_000)
+    tiempo_min: int = Field(120, ge=1, le=240)   # hasta 4 horas simuladas
 
 
 class RsuReq(BaseModel):
@@ -196,6 +213,10 @@ class OptReq(BaseModel):
     # esperando todo ese rato). Con un número, al agotarlo devuelve la mejor
     # solución encontrada en vez de seguir probando optimalidad.
     limite_tiempo: float | None = Field(60, ge=5, le=3600)
+    # Multi-objetivo lexicográfico de CPLEX: primero la cobertura, y entre las
+    # soluciones que la alcanzan, la que use menos RSU. `false` vuelve a la
+    # suma ponderada clásica (útil para comparar).
+    lexicografico: bool = True
 
 
 # ============================================================
@@ -232,10 +253,29 @@ def scenario_buildings():
 def scenario_generate(req: ScenarioReq):
     """M1 — descarga OSM, corre SUMO y extrae junctions + edificios."""
     b = req.bbox
+
+    # "Escenario nuevo" quiere decir NUEVO: si quedaba una corrida a medias
+    # —porque se pulsó el botón otra vez, o porque una pestaña se recargó— se
+    # corta antes de empezar. Si no, las dos se pelean por la CPU y la RAM y las
+    # dos van lentas; y no se pueden parar desde la consola, porque el endpoint
+    # corre en un hilo del threadpool y un hilo de Python no se interrumpe.
+    # Lo que sí se puede matar es el subproceso de SUMO, que es lo que de verdad
+    # consume la máquina (ver backend/procesos.py).
+    cortados = cancelar_todo()
+
     # Un escenario nuevo abre una sesión de medición nueva: los tiempos de las
     # etapas siguientes se acumulan sobre esta corrida (ver api/cronometro.py).
     cron.nueva_sesion(f"escenario nuevo · {req.num_vehiculos} vehiculos · "
                       f"{req.tiempo_min} min")
+    if cortados:
+        cron.nota(f"corrida anterior cortada: {', '.join(cortados)}")
+
+    # El estado en memoria del escenario viejo deja de valer en cuanto se
+    # empieza otro: si M1 falla a mitad, mejor no tener nada que tener una
+    # mezcla de los dos.
+    STATE["junctions"] = None
+    STATE["edificios"] = None
+    STATE["rsus"] = None
     with cron.etapa("M1 - Generar escenario"):
         with cron.subetapa("Descarga OSM"):
             osm_path, err = descargar_mapa_osm(b.min_lon, b.min_lat,
@@ -244,10 +284,17 @@ def scenario_generate(req: ScenarioReq):
             raise HTTPException(400, f"Descarga OSM: {err}")
 
         periodo = (req.tiempo_min * 60) / req.num_vehiculos
-        with cron.subetapa("SUMO (netconvert/polyconvert/trips)"):
+        # Las tres herramientas se cronometran por separado: iban en una sola
+        # linea y no habia forma de ver cual costaba. Con muchos vehiculos
+        # randomTrips (que por dentro llama a duarouter, un camino minimo por
+        # vehiculo) se lleva mas del 95 % de esta etapa.
+        with cron.subetapa("SUMO (netconvert + polyconvert + trips)"):
             pasos = ejecutar_pipeline_sumo(osm_path, OUTPUT_DIR,
                                            num_vehiculos=req.num_vehiculos,
                                            periodo_salida=periodo)
+        for _p in pasos:
+            if _p.get("segundos") is not None:
+                cron.nota(f"{_p['paso']:.<28} {_p['segundos']:8.3f} s")
         if any(not p["exito"] for p in pasos):
             fallo = next(p for p in pasos if not p["exito"])
             raise HTTPException(500, f"SUMO ({fallo['paso']}): {fallo['mensaje']}")
@@ -412,15 +459,17 @@ def optimize(req: OptReq):
     etiqueta_maxr = "sin limite" if req.max_rsu is None else str(req.max_rsu)
     etiqueta_lim = ("sin limite" if req.limite_tiempo is None
                     else f"{req.limite_tiempo:g} s")
+    modo = "lexicografico" if req.lexicografico else "suma ponderada"
     with cron.etapa(f"M3 - Optimizar despliegue (H={req.H}, MaxR={etiqueta_maxr}, "
-                    f"tope={etiqueta_lim})"):
+                    f"tope={etiqueta_lim}, {modo})"):
         with cron.subetapa("Multisalto + construccion del CVR (.dat)"):
             datos = exportar_dat_desde_memoria(
                 STATE["matrices_v2v"], STATE["tuplas_v2i"], STATE["rsus"], dat,
                 H=req.H, max_rsu=req.max_rsu, solo_rsu_conectados=True)
         with cron.subetapa("Solver CPLEX (branch & bound)") as medida:
             res = optimizar(datos, mostrar_log=False,
-                            limite_tiempo=req.limite_tiempo)
+                            limite_tiempo=req.limite_tiempo,
+                            lexicografico=req.lexicografico)
         # Tiempo del MOTOR (sin el armado del modelo): es el que hay que
         # comparar contra el límite. Si docplex no lo diera, cae al reloj.
         seg_motor = res.get("segundos_solver")
@@ -451,6 +500,8 @@ def optimize(req: OptReq):
             "n_desplegadas": res["n_rsu_elegidos"],
             "status": res["status"],
             "cobertura": rep,
+            "objetivos": res.get("objetivos"),
+            "lexicografico": req.lexicografico,
             "solver": {
                 "status": res["status"],
                 "segundos": round(float(seg_motor), 2),        # solo el motor

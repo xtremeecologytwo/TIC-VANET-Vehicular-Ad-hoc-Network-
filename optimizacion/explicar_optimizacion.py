@@ -5,8 +5,8 @@ Versión DIDÁCTICA del optimizador de RSU: corre el micro-ejemplo y va
 explicando por consola, paso a paso, TODO lo que se hace — desde las
 tuplas de conectividad hasta la decisión final del solver CPLEX.
 
-Lee los datos reales de 'rsu_micro.dat', los explica, llama a 'oplrun'
-(CPLEX/OPL) y desglosa por qué salió ese resultado.
+Lee los datos reales de 'rsu_micro.dat', los explica, resuelve el modelo con
+docplex/CPLEX y desglosa por qué salió ese resultado.
 
 Uso:
     python optimizacion/explicar_optimizacion.py
@@ -23,7 +23,7 @@ try:
 except Exception:
     pass
 
-from optimizar_rsu import optimizar   # reutiliza la llamada real a oplrun
+from optimizar_rsu import optimizar   # construye y resuelve con docplex/CPLEX
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 
@@ -53,6 +53,12 @@ def pausa(msg="(pulsa ENTER para continuar)"):
 # ============================================================
 
 def leer_dat(ruta):
+    """
+    Parsea un `.dat` de OPL y devuelve el MISMO dict que produce
+    `backend.exportar_dat.construir_datos_opl()`, para poder pasárselo tal cual
+    a `optimizar()`. Así este script didáctico usa exactamente el mismo camino
+    de resolución que la aplicación.
+    """
     txt = open(ruta, encoding="utf-8").read()
     # quitar comentarios /* ... */ y // ...
     txt = re.sub(r"/\*.*?\*/", "", txt, flags=re.S)
@@ -62,10 +68,30 @@ def leer_dat(ruta):
         m = re.search(rf"{nombre}\s*=\s*(\d+)", txt)
         return int(m.group(1)) if m else defecto
 
+    def conjunto(nombre):
+        """R = { 0, 1, 2 };  ->  [0, 1, 2]"""
+        m = re.search(rf"{nombre}\s*=\s*\{{([^}}]*)\}}\s*;", txt)
+        if not m:
+            return []
+        return [int(x) for x in re.findall(r"\d+", m.group(1))]
+
+    def mapa(nombre):
+        """Cost = #[ 0:0, 1:1 ]#;  ->  {0: 0.0, 1: 1.0}"""
+        m = re.search(rf"{nombre}\s*=\s*#\[([^\]]*)\]#", txt)
+        if not m:
+            return {}
+        return {int(k): float(v)
+                for k, v in re.findall(r"(\d+)\s*:\s*([\d.]+)", m.group(1))}
+
     datos = {
         "hmax": escalar("hmax"),
         "rInf": escalar("rInf"),
         "MaxR": escalar("MaxR"),
+        "R": conjunto("R"),
+        "S": conjunto("S"),
+        "V": conjunto("V"),
+        "Cost": mapa("Cost"),
+        "Cap": mapa("Cap"),
     }
 
     # CVR: todas las tuplas <s,h,v,r>
@@ -76,12 +102,20 @@ def leer_dat(ruta):
     mP = re.search(r"P\s*=\s*\[([^\]]*)\]", txt)
     datos["P"] = [float(x) for x in mP.group(1).split(",")] if mP else []
 
-    # Cost = #[ 0:0, 1:1, ... ]#
-    mC = re.search(r"Cost\s*=\s*#\[([^\]]*)\]#", txt)
-    datos["Cost"] = {}
-    if mC:
-        for par in re.findall(r"(\d+)\s*:\s*([\d.]+)", mC.group(1)):
-            datos["Cost"][int(par[0])] = float(par[1])
+    # Vs = #[ 1 : {1, 2, 3}, 2 : {1, 2, 4} ]#;
+    datos["Vs"] = {}
+    mVs = re.search(r"Vs\s*=\s*#\[(.*?)\]#\s*;", txt, flags=re.S)
+    if mVs:
+        for s, lista in re.findall(r"(\d+)\s*:\s*\{([^}]*)\}", mVs.group(1)):
+            datos["Vs"][int(s)] = [int(v) for v in re.findall(r"\d+", lista)]
+
+    # L = #[ 1 : #[ 1:1, 2:1 ]#, 2 : #[ ... ]# ]#;   (mapa anidado)
+    datos["L"] = {}
+    mL = re.search(r"L\s*=\s*#\[(.*?)\]#\s*;", txt, flags=re.S)
+    if mL:
+        for s, interior in re.findall(r"(\d+)\s*:\s*#\[([^\]]*)\]#", mL.group(1)):
+            datos["L"][int(s)] = {int(v): float(c) for v, c in
+                                  re.findall(r"(\d+)\s*:\s*([\d.]+)", interior)}
 
     return datos
 
@@ -111,7 +145,7 @@ def main():
 
     print("\n" + "#" * 68)
     print("#  OPTIMIZACIÓN DE RSU  —  explicación paso a paso")
-    print("#  (modelo de Urquiza-Aguiar et al. 2016, resuelto con CPLEX/OPL)")
+    print("#  (modelo de Urquiza-Aguiar et al. 2016, resuelto con docplex/CPLEX)")
     print("#" * 68)
 
     # ---------- PASO 1: el objetivo ----------
@@ -192,13 +226,13 @@ def main():
     pausa()
 
     # ---------- PASO 5: resolver con CPLEX ----------
-    titulo("PASO 5 — Resolvemos con CPLEX (oplrun)")
-    print("\n  Python lanza el solver con el modelo OPL y estos datos...\n")
-    res = optimizar(dat)
+    titulo("PASO 5 — Resolvemos con CPLEX (docplex)")
+    print("\n  Python arma el modelo en memoria con docplex y lo resuelve...\n")
+    res = optimizar(d)   # `d` ya es el dict de datos que espera el modelo
 
     if res["objetivo"] is None:
-        print("\n⚠️ El solver no devolvió solución. Salida:\n")
-        print(res["salida"])
+        print("\n⚠️ El solver no devolvió solución.")
+        print(f"   Estado: {res['status']}")
         return
 
     seleccionados = res["seleccionados"]

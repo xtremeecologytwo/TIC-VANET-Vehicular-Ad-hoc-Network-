@@ -29,6 +29,10 @@ export interface OptResult {
     max_rsu: number;
   };
   objetivo: number | null;
+  /** Con lexicográfico: [coste de tráfico, coste de instalación]. */
+  objetivos: number[] | null;
+  /** true si se resolvió con prioridades en vez de con la suma ponderada. */
+  lexicografico: boolean;
   n_desplegadas: number;
   status: string;
   /** Cómo quedó servida la demanda. Un "par" es un (instante, vehículo). */
@@ -103,6 +107,7 @@ export const api = {
     req<SimResult>("/api/simulate", { method: "POST", body: JSON.stringify(body) }),
   optimize: (body: {
     H: number; max_rsu: number | null; limite_tiempo: number | null;
+    lexicografico: boolean;
   }) =>
     req<OptResult>("/api/optimize", { method: "POST", body: JSON.stringify(body) }),
   timesteps: () => req<{ timesteps: number[] }>("/api/timesteps"),

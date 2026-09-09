@@ -44,6 +44,7 @@ CV/
 # ---- Herramientas locales del editor / asistente ----
 .claude/skills/
 skills-lock.json
+.agents/
 
 # ---- LaTeX (basura de compilación) ----
 *.aux
@@ -70,3 +71,6 @@ trips.trips.xml
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Cache de descargas de Overpass (se regenera sola)
+.osm_cache/

@@ -12,6 +12,33 @@ import json
 import xml.etree.ElementTree as ET
 
 
+def _iter_elementos(ruta: str, etiqueta: str):
+    """
+    Recorre los elementos `<etiqueta>` de un XML SIN cargarlo entero en memoria.
+
+    `ET.parse()` construye el árbol completo: para el `.net.xml` de una ciudad
+    (cientos de MB) eso son varios GB de objetos Python y decenas de segundos,
+    aunque solo se necesiten unos pocos atributos. `iterparse` va emitiendo los
+    elementos según los lee, y aquí se descartan en cuanto se usan, de modo que
+    la memoria se mantiene constante sea cual sea el tamaño del archivo.
+
+    Parámetros:
+        ruta: archivo XML a recorrer.
+        etiqueta: nombre de la etiqueta que interesa (p. ej. "junction").
+
+    Cede:
+        Cada elemento con esa etiqueta. **Solo es válido durante la iteración**:
+        después se vacía, así que hay que leer sus atributos en el momento.
+    """
+    contexto = ET.iterparse(ruta, events=("start", "end"))
+    _, raiz = next(contexto)          # el elemento raíz, para poder vaciarlo
+    for evento, elem in contexto:
+        if evento == "end" and elem.tag == etiqueta:
+            yield elem
+            elem.clear()
+            del raiz[:]               # descarta lo ya procesado
+
+
 def parsear_junctions(net_xml_path: str, output_dir: str = "output") -> tuple[dict | None, str | None]:
     """
     Parsea el archivo .net.xml y extrae las junctions útiles.
@@ -27,33 +54,29 @@ def parsear_junctions(net_xml_path: str, output_dir: str = "output") -> tuple[di
         (diccionario_junctions, None) si fue exitoso,
         (None, mensaje_error) si hubo error.
     """
+    junctions = {}
+    tipos_excluidos = {"internal", "dead_end"}
+
+    # Recorrido en streaming: el .net.xml de una ciudad pesa cientos de MB y
+    # construir su árbol completo cuesta memoria y segundos de más.
     try:
-        tree = ET.parse(net_xml_path)
-        root = tree.getroot()
+        for junction in _iter_elementos(net_xml_path, "junction"):
+            if junction.get("type", "") in tipos_excluidos:
+                continue
+            j_id = junction.get("id")
+            try:
+                x = float(junction.get("x", "0"))
+                y = float(junction.get("y", "0"))
+                junctions[j_id] = {"x": x, "y": y}
+            except (ValueError, TypeError):
+                # Si no se puede convertir a float, saltamos esa junction
+                continue
     except ET.ParseError as e:
         return None, f"Error parseando XML de red: {e}"
     except FileNotFoundError:
         return None, f"Archivo no encontrado: {net_xml_path}"
-    
-    junctions = {}
-    tipos_excluidos = {"internal", "dead_end"}
-    
-    for junction in root.findall("junction"):
-        j_type = junction.get("type", "")
-        j_id = junction.get("id")
-        
-        # Filtrar los tipos no deseados
-        if j_type in tipos_excluidos:
-            continue
-        
-        try:
-            x = float(junction.get("x", "0"))
-            y = float(junction.get("y", "0"))
-            junctions[j_id] = {"x": x, "y": y}
-        except (ValueError, TypeError):
-            # Si no se puede convertir a float, saltamos esa junction
-            continue
-    
+
+
     # Guardar el JSON resultante
     json_path = os.path.join(output_dir, "junctions_limpias.json")
     try:
@@ -81,23 +104,16 @@ def parsear_edificios(poly_xml_path: str, output_dir: str = "output") -> tuple[d
         (diccionario_edificios, None) si fue exitoso,
         (None, mensaje_error) si hubo error.
     """
-    try:
-        tree = ET.parse(poly_xml_path)
-        root = tree.getroot()
-    except ET.ParseError as e:
-        return None, f"Error parseando XML de polígonos: {e}"
-    except FileNotFoundError:
-        return None, f"Archivo no encontrado: {poly_xml_path}"
-    
     edificios = {}
-    
-    for poly in root.findall("poly"):
+
+    try:
+      for poly in _iter_elementos(poly_xml_path, "poly"):
         p_type = poly.get("type", "")
-        
+
         # Solo nos interesan los polígonos de tipo building
         if "building" not in p_type.lower():
             continue
-        
+
         p_id = poly.get("id")
         shape_str = poly.get("shape", "")
         
@@ -114,7 +130,11 @@ def parsear_edificios(poly_xml_path: str, output_dir: str = "output") -> tuple[d
         # Solo agregar si tiene geometría válida (al menos 3 puntos para un polígono)
         if len(lista_coords) >= 3:
             edificios[p_id] = lista_coords
-    
+    except ET.ParseError as e:
+        return None, f"Error parseando XML de polígonos: {e}"
+    except FileNotFoundError:
+        return None, f"Archivo no encontrado: {poly_xml_path}"
+
     # Guardar el JSON resultante
     json_path = os.path.join(output_dir, "edificios_limpios.json")
     try:
@@ -137,16 +157,24 @@ def obtener_proyeccion(net_xml_path: str) -> dict | None:
         - conv: [x_min, y_min, x_max, y_max] (boundary convertido)
     O None si no se pudo leer.
     """
+    # `<location>` es uno de los PRIMEROS elementos del .net.xml. Antes se
+    # parseaba el archivo entero (cientos de MB, ~17 s) para leer sus cuatro
+    # atributos; con iterparse se corta en cuanto aparece.
+    # Se copian los atributos dentro del bucle: `_iter_elementos` vacía cada
+    # elemento tras cederlo, así que no se puede guardar la referencia.
+    attrs = None
     try:
-        tree = ET.parse(net_xml_path)
-        root = tree.getroot()
+        for elem in _iter_elementos(net_xml_path, "location"):
+            attrs = dict(elem.attrib)
+            break
     except (ET.ParseError, FileNotFoundError):
         return None
-    
-    location = root.find("location")
-    if location is None:
+
+    if attrs is None:
         return None
-    
+
+    location = attrs   # dict con la misma interfaz .get() que usaba antes
+
     try:
         orig = [float(v) for v in location.get("origBoundary", "").split(",")]
         conv = [float(v) for v in location.get("convBoundary", "").split(",")]
@@ -224,6 +252,14 @@ def convertir_xy_a_lonlat(x: float, y: float, proy: dict) -> tuple[float, float]
     return lat, lon
 
 
+# Caché de grados por archivo de red. Recorrer el .net.xml de una ciudad cuesta
+# ~17 s, y los grados NO dependen de los parámetros del filtro: al probar varios
+# valores de grado mínimo o radio de clúster se recalculaban una y otra vez.
+# La clave incluye tamaño y fecha del archivo, así que si se regenera el
+# escenario la caché se invalida sola.
+_GRADOS_CACHE: dict = {}
+
+
 def calcular_grado_junctions(net_xml_path: str) -> dict[str, int]:
     """
     Calcula el grado de conectividad de cada junction como el número de
@@ -243,30 +279,44 @@ def calcular_grado_junctions(net_xml_path: str) -> dict[str, int]:
     Retorna:
         Diccionario {junction_id: grado}  (grado = nº de vecinos únicos)
     """
+    # ¿Ya se calcularon para este archivo? (ver _GRADOS_CACHE)
     try:
-        tree = ET.parse(net_xml_path)
-        root = tree.getroot()
-    except (ET.ParseError, FileNotFoundError):
+        st = os.stat(net_xml_path)
+        clave = (os.path.abspath(net_xml_path), st.st_size, st.st_mtime_ns)
+    except OSError:
         return {}
+    if clave in _GRADOS_CACHE:
+        return _GRADOS_CACHE[clave]
 
     # Conjunto de vecinos por junction (grafo simple no dirigido)
     vecinos: dict[str, set] = {}
 
-    for edge in root.findall("edge"):
-        # Ignorar aristas internas (las de dentro de las junction)
-        if edge.get("function") == "internal":
-            continue
+    # En streaming: es la tercera vez que se recorre el .net.xml en el flujo
+    # (proyección, junctions y grados), y con una ciudad entera cada pasada con
+    # el árbol completo costaba ~17 s y varios GB.
+    try:
+        for edge in _iter_elementos(net_xml_path, "edge"):
+            # Ignorar aristas internas (las de dentro de las junction)
+            if edge.get("function") == "internal":
+                continue
 
-        from_id = edge.get("from")
-        to_id = edge.get("to")
-        # descartar aristas incompletas o lazos (from == to)
-        if not from_id or not to_id or from_id == to_id:
-            continue
+            from_id = edge.get("from")
+            to_id = edge.get("to")
+            # descartar aristas incompletas o lazos (from == to)
+            if not from_id or not to_id or from_id == to_id:
+                continue
 
-        vecinos.setdefault(from_id, set()).add(to_id)
-        vecinos.setdefault(to_id, set()).add(from_id)
+            vecinos.setdefault(from_id, set()).add(to_id)
+            vecinos.setdefault(to_id, set()).add(from_id)
+    except (ET.ParseError, FileNotFoundError):
+        return {}
 
-    return {j: len(vs) for j, vs in vecinos.items()}
+    grados = {j: len(vs) for j, vs in vecinos.items()}
+    # Solo se guarda la última red: escenarios anteriores ya no interesan y
+    # cada entrada puede tener decenas de miles de junctions.
+    _GRADOS_CACHE.clear()
+    _GRADOS_CACHE[clave] = grados
+    return grados
 
 
 def filtrar_junctions_rsu(junctions: dict, net_xml_path: str,

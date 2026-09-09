@@ -74,7 +74,7 @@ except Exception:
 # ============================================================
 
 
-def construir_modelo(datos: dict):
+def construir_modelo(datos: dict, lexicografico: bool = True):
     """
     Construye el modelo de optimización con docplex a partir del dict de
     datos que produce `backend.exportar_dat.construir_datos_opl()`.
@@ -84,6 +84,10 @@ def construir_modelo(datos: dict):
     Parámetros:
         datos: dict con las claves hmax, rInf, MaxR, R, S, V, Vs, Cost, Cap,
                P, L, CVR (ver construir_datos_opl).
+        lexicografico: si True (por defecto), usa el multi-objetivo con
+               PRIORIDADES de CPLEX en tres niveles — 1º la carga desconectada
+               (cobertura), 2º el nº de antenas y 3º el coste por saltos. Si
+               False, usa la suma ponderada clásica de la Ec. 1.
 
     Retorna:
         (mdl, Sel, Rts):
@@ -135,10 +139,60 @@ def construir_modelo(datos: dict):
         cvr_por_sv[(s, v)].append(t)
         cvr_por_sr[(s, r)].append(t)
 
-    # ---- Objetivo (Ec. 1) ----
+    # ---- Objetivos ----
+    # La Ec. 1 original suma TRES cosas en un solo número:
+    #   (a) la carga que se queda sin servicio (cae en r_inf, salto hmax),
+    #   (b) el número de antenas desplegadas,
+    #   (c) el coste por saltos del tráfico que sí se sirve.
+    # Como en este modelo `h == hmax` ocurre SI Y SOLO SI `r == rInf` (ver
+    # exportar_dat.py: la única tupla con salto hmax es la que va a r_inf), el
+    # término de tráfico se puede partir en (a) y (c) sin solaparse.
     coste_instalacion = mdl.sum(Sel[r] * Cost[r] for r in R)
-    coste_trafico = mdl.sum(Rts[t] * Ph(t[1]) * L[t[0]][t[2]] for t in CVR)
-    mdl.minimize(coste_instalacion + coste_trafico)
+    carga_desconectada = mdl.sum(L[t[0]][t[2]] * Rts[t] for t in CVR if t[1] == hmax)
+    coste_trafico = mdl.sum(Rts[t] * Ph(t[1]) * L[t[0]][t[2]]
+                            for t in CVR if t[1] != hmax)
+    # Ec. 1 tal cual (los tres términos fundidos con sus pesos): la usa la suma
+    # ponderada, y sirve para reportar un "objetivo" comparable entre modos.
+    coste_trafico_total = mdl.sum(Rts[t] * Ph(t[1]) * L[t[0]][t[2]] for t in CVR)
+
+    if lexicografico:
+        # MULTI-OBJETIVO LEXICOGRÁFICO NATIVO DE CPLEX, en TRES niveles:
+        #
+        #   1. carga desconectada   -> maximiza la cobertura
+        #   2. coste de instalación -> entre las soluciones de cobertura máxima,
+        #                              la que use menos antenas
+        #   3. coste de tráfico     -> entre esas, la de menos saltos
+        #
+        # POR QUÉ EN TRES Y NO EN DOS. Con dos niveles, (1) y (3) van fundidos en
+        # un solo objetivo, y para que una desconexión pese más que unos cuantos
+        # saltos hace falta el parámetro `penal_desconexion` = P[hmax]. Ese
+        # número es un tipo de cambio arbitrario —"cuántos saltos vale un
+        # vehículo sin cobertura"— y calibrarlo fue un problema real. Al separar
+        # la desconexión a su propio nivel de prioridad, P[hmax] DEJA DE APARECER
+        # en el modelo: no está en ningún objetivo, y en la Ec. 4 tampoco porque
+        # esa restricción excluye a r_inf. La jerarquía lo sustituye por
+        # completo, y la cobertura máxima pasa a estar garantizada por
+        # construcción en vez de "mientras la penalización sea grande".
+        #
+        # El orden también decide el desempate entre antenas y saltos: aquí manda
+        # el número de antenas (nivel 2) y la calidad multisalto es lo último que
+        # se optimiza (nivel 3), con la libertad que quede. Es una decisión de
+        # diseño: la infraestructura es dinero, los saltos son calidad.
+        #
+        # abstols/reltols a 0 = lexicográfico ESTRICTO. Con los valores por
+        # defecto CPLEX se permite degradar un poco el objetivo anterior al
+        # optimizar el siguiente, y aquí "un poco" del primero es un vehículo
+        # que se queda sin cobertura.
+        mdl.minimize_static_lex(
+            [carga_desconectada, coste_instalacion, coste_trafico],
+            abstols=[0.0, 0.0, 0.0], reltols=[0.0, 0.0, 0.0],
+            objnames=["desconexion", "instalacion", "trafico"],
+        )
+    else:
+        # Suma ponderada clasica (Ec. 1 tal cual): se conserva para poder
+        # comparar resultados con las corridas anteriores. Aquí `P[hmax]` sí
+        # importa: es lo único que hace que desconectar salga caro.
+        mdl.minimize(coste_instalacion + coste_trafico_total)
 
     # ---- (Ec. 2) toda la carga de cada vehículo de cada escenario se sirve ----
     for s in S:
@@ -173,7 +227,8 @@ def construir_modelo(datos: dict):
 
 
 def optimizar(datos: dict, mostrar_log: bool = False,
-              limite_tiempo: float | None = None) -> dict:
+              limite_tiempo: float | None = None,
+              lexicografico: bool = True) -> dict:
     """
     Construye y resuelve el modelo con docplex/CPLEX.
 
@@ -181,6 +236,8 @@ def optimizar(datos: dict, mostrar_log: bool = False,
         datos: dict de datos (de construir_datos_opl / exportar_dat).
         mostrar_log: si True, imprime el log del motor CPLEX.
         limite_tiempo: límite de tiempo en segundos (None = sin límite).
+        lexicografico: resolver con prioridades (cobertura antes que nº de RSU)
+                       en vez de con la suma ponderada. Ver `construir_modelo`.
 
     Retorna:
         dict:
@@ -199,7 +256,7 @@ def optimizar(datos: dict, mostrar_log: bool = False,
               Un "par" es un (escenario, vehículo); la COBERTURA es la fracción
               que NO cae en el RSU artificial r_inf.
     """
-    mdl, Sel, Rts = construir_modelo(datos)
+    mdl, Sel, Rts = construir_modelo(datos, lexicografico=lexicografico)
 
     if limite_tiempo is not None:
         mdl.set_time_limit(limite_tiempo)
@@ -230,6 +287,7 @@ def optimizar(datos: dict, mostrar_log: bool = False,
             "n_rsu_elegidos": 0,
             "segundos_solver": None,
             "reparto": None,
+            "objetivos": None,
         }
 
     if sol is None:
@@ -241,6 +299,7 @@ def optimizar(datos: dict, mostrar_log: bool = False,
             "n_rsu_elegidos": 0,
             "segundos_solver": mdl.solve_details.time if mdl.solve_details else None,
             "reparto": None,
+            "objetivos": None,
         }
 
     rInf = datos["rInf"]
@@ -256,14 +315,21 @@ def optimizar(datos: dict, mostrar_log: bool = False,
         # salto hmax es la desconexión (cae en r_inf), así que la COBERTURA es
         # todo lo que NO acaba ahí. Es la métrica que mide el objetivo del
         # proyecto: cuántos vehículos quedan comunicados.
+        # De paso se acumula el término de tráfico de la Ec. 1 (con los
+        # pesos P[h] originales) para poder reportar un "objetivo" comparable
+        # entre el modo lexicográfico y la suma ponderada.
+        P, L = datos["P"], datos["L"]
+        ec1_traf = [0.0]
         carga_por_h = defaultdict(float)
         for t in datos["CVR"]:
             val = solucion.get_value(Rts[t])
             if val > 1e-9:
                 carga_por_h[t[1]] += val
+                ec1_traf[0] += val * P[t[1] - 1] * L[t[0]][t[2]]
         desconectados = carga_por_h.get(hmax, 0.0)
         conectados = n_pares - desconectados
         rep = {
+            "_ec1_trafico": ec1_traf[0],
             "n_pares": n_pares,
             "conectados": conectados,
             "desconectados": desconectados,
@@ -275,13 +341,35 @@ def optimizar(datos: dict, mostrar_log: bool = False,
         return elegidos, rep
 
     seleccionados, reparto = _leer(sol)
+    objetivo_ec1 = (reparto.pop("_ec1_trafico")
+                    + sum(datos["Cost"][r] for r in datos["R"]
+                          if sol.get_value(Sel[r]) > 0.5))
+
+    # Con multi-objetivo lexicográfico, CPLEX devuelve los objetivos por
+    # separado y EN ORDEN DE PRIORIDAD:
+    #   [carga desconectada, coste de instalación, coste de tráfico].
+    objetivos = None
+    if lexicografico:
+        try:
+            vals = mdl.multi_objective_values
+            if vals is not None:
+                objetivos = [float(v) for v in vals]
+        except Exception:
+            objetivos = None
 
     # Mapa entero_OPL -> id_backend para reportar RSU reales
     int_a_rsu = datos.get("mapas", {}).get("int_a_rsu", {})
     seleccionados_backend = [int_a_rsu.get(r, r) for r in seleccionados]
 
     return {
-        "objetivo": sol.get_objective_value(),
+        # Con multi-objetivo, `get_objective_value()` devuelve una LISTA y
+        # su suma NO es la Ec. 1 (en el nivel 1 la desconexión ya no lleva el
+        # peso P[hmax]). Para que el KPI "Objetivo" siga siendo comparable
+        # entre modos, se re-evalúa la Ec. 1 sobre la solución encontrada.
+        "objetivo": (objetivo_ec1 if objetivos is not None
+                     else sol.get_objective_value()),
+        # [desconexion, instalacion, trafico] en orden de prioridad, o None
+        "objetivos": objetivos,
         "seleccionados": seleccionados,
         "seleccionados_backend": seleccionados_backend,
         "status": mdl.solve_details.status,

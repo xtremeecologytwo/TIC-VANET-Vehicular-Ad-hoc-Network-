@@ -16,7 +16,24 @@ Flujo:
 
 import os
 import subprocess
+
+from .procesos import correr
 import xml.etree.ElementTree as ET
+
+# Tiempo máximo de la simulación SUMO. Igual que en `sumo_pipeline.py`, es una
+# red de seguridad, no un límite de tamaño: con una ciudad entera y muchos
+# vehículos hay que subirlo. Se ajusta con la variable de entorno
+# SUMO_TIMEOUT_S (segundos); 0 o negativo lo desactiva.
+TIMEOUT_SIM_POR_DEFECTO = 0.0   # 30 min
+
+
+def _timeout_sim() -> float | None:
+    """Lee SUMO_TIMEOUT_S del entorno. Devuelve None si se desactivó (<= 0)."""
+    try:
+        v = float(os.environ.get("SUMO_TIMEOUT_S", TIMEOUT_SIM_POR_DEFECTO))
+    except ValueError:
+        v = TIMEOUT_SIM_POR_DEFECTO
+    return None if v <= 0 else v
 
 
 def generar_sumocfg(output_dir: str, tiempo_simulacion: float = 100.0,
@@ -130,17 +147,18 @@ def ejecutar_simulacion_sumo(output_dir: str,
     # Paso 2: Ejecutar SUMO como subproceso
     # Usamos os.path.basename porque cwd=output_dir hace que SUMO
     # busque los archivos relativos al directorio de salida
-    cmd = ["sumo", "-c", os.path.basename(cfg_path)]
+    # SUMO tambien reparte el movimiento de los vehiculos entre hilos.
+    # Con pocos vehiculos no compensa (el reparto cuesta mas que el
+    # calculo), pero con decenas de miles es donde se va el tiempo de M2.
+    from .sumo_pipeline import _hilos
+    cmd = ["sumo", "-c", os.path.basename(cfg_path),
+           "--threads", str(_hilos())]
 
     try:
-        resultado = subprocess.run(
-            cmd,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=600,  # 10 minutos máximo para simulaciones largas (ej. 2-3 h)
-            cwd=output_dir  # Ejecutar desde el directorio de salida
-        )
+        # Ejecutar desde output_dir: el .sumocfg referencia sus archivos
+        # con rutas relativas.
+        resultado = correr(cmd, timeout=_timeout_sim(), cwd=output_dir,
+                           etiqueta="sumo")
     except FileNotFoundError:
         return None, (
             "No se encontró el ejecutable 'sumo'. "
@@ -150,7 +168,13 @@ def ejecutar_simulacion_sumo(output_dir: str,
     except subprocess.CalledProcessError as e:
         return None, f"Error en la simulación SUMO:\n{e.stderr[:500]}"
     except subprocess.TimeoutExpired:
-        return None, "La simulación SUMO excedió el tiempo máximo (10 minutos)."
+        lim = _timeout_sim()
+        cuanto = f"{lim:g}s" if lim else "sin limite"
+        return None, (
+            f"La simulación SUMO excedió el tiempo máximo ({cuanto}). "
+            "Sube el límite con la variable de entorno SUMO_TIMEOUT_S "
+            "(p. ej. 3600, o 0 para quitarlo) y reinicia la API."
+        )
 
     # Paso 3: Verificar que el FCD se generó
     if not os.path.isfile(fcd_path):

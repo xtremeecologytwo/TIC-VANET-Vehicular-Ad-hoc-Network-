@@ -117,7 +117,7 @@ def _construir_mapa_rsu(rsu_ids: list) -> tuple[dict, dict]:
 def construir_datos_opl(matrices_v2v: dict, tuplas_v2i: list, rsu_ids: list,
                         H: int = 3, max_rsu: int | None = None,
                         cap_real: float = 300.0, cap_inf: float = 10000.0,
-                        penal_desconexion: float = 100.0,
+                        penal_desconexion: float = 1000.0,
                         carga_default: float = 10.0,
                         forzar_simetria: bool = True,
                         solo_rsu_conectados: bool = True,

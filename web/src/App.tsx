@@ -45,14 +45,40 @@ function Slider({ label, value, min, max, step = 1, unit = "", onChange }: {
 function Num({ label, value, min, max, onChange }: {
   label: string; value: number; min: number; max: number; onChange: (v: number) => void;
 }) {
+  // `borrador` guarda lo que hay escrito MIENTRAS se teclea. Sin él, recortar a
+  // `min` en cada pulsación hace que el campo no se pueda vaciar: al borrarlo,
+  // Number("") es 0, se sube a `min` y ese número queda plantado delante de lo
+  // que vengas a escribir después.
+  const [borrador, setBorrador] = useState<string | null>(null);
+  const mostrado = borrador ?? String(value);
+
   return (
     <label className="field num">
       <span>{label}</span>
-      <input type="number" className="mono" min={min} max={max} value={value}
+      <input type="number" className="mono" min={min} max={max} value={mostrado}
         onChange={(e) => {
-          const v = Number(e.target.value);
-          if (Number.isFinite(v)) onChange(Math.min(max, Math.max(min, Math.round(v))));
-        }} />
+          const txt = e.target.value;
+          setBorrador(txt);                    // dejar escribir (y vaciar) libremente
+          // Solo se propaga hacia arriba lo que YA es un valor legal; nada se
+          // recorta todavía, para no estorbar a medio teclear.
+          const v = Number(txt);
+          if (txt !== "" && Number.isFinite(v) && v >= min && v <= max) {
+            onChange(Math.round(v));
+          }
+        }}
+        onBlur={() => {
+          // Al salir del campo sí se normaliza: vacío o fuera de rango vuelve a
+          // un valor válido.
+          const v = Number(borrador ?? "");
+          if (borrador !== null) {
+            const fin = (borrador.trim() === "" || !Number.isFinite(v))
+              ? value
+              : Math.min(max, Math.max(min, Math.round(v)));
+            onChange(fin);
+          }
+          setBorrador(null);
+        }}
+        onFocus={(e) => e.currentTarget.select()} />
     </label>
   );
 }
@@ -76,6 +102,23 @@ type Kpi = string | number | { value: string | number; sub?: string; tone?: "ok"
 /* ---------- app ---------- */
 
 const DEF = { num_vehiculos: 100, tiempo_min: 120, min_grado: 4, radio_cluster: 20, radio_obu: 300, step_min: 2, H: 3 };
+
+/**
+ * Configuraciones de partida. Lo que dispara el coste no es el mapa sino la
+ * carga de tráfico: los vehículos encarecen SUMO, elevan al cuadrado el cálculo
+ * V2V (compara PARES de vehículos) y multiplican el tamaño del MILP. El muestreo
+ * va emparejado a propósito — más vehículos, instantes más espaciados — porque
+ * los pares (instante, vehículo) son el producto de ambos y es esa cifra la que
+ * decide si la optimización termina.
+ */
+const PRESETS = [
+  { id: "rapido", nombre: "Rápido",  num_vehiculos: 500,   tiempo_min: 60,  step_min: 5,
+    pista: "Para probar el flujo entero en minutos." },
+  { id: "medio",  nombre: "Medio",   num_vehiculos: 5000,  tiempo_min: 120, step_min: 5,
+    pista: "Escenario de trabajo; la optimización aún cierra." },
+  { id: "denso",  nombre: "Denso",   num_vehiculos: 50000, tiempo_min: 180, step_min: 10,
+    pista: "Carga alta. Medido en esta red, 50 000 vehículos la saturan (viajes de ~69 min de media) y M2/M3 se van a horas." },
+] as const;
 
 export default function App() {
   const [p, setP] = useState(DEF);
@@ -104,6 +147,8 @@ export default function App() {
   // el óptimo (la petición se queda esperando todo ese rato).
   const [topeOn, setTopeOn] = useState(true);
   const [tope, setTope] = useState(60);
+  // Multi-objetivo lexicográfico de CPLEX: cobertura primero, RSU después.
+  const [lexOn, setLexOn] = useState(true);
 
   const set = (k: keyof typeof DEF) => (v: number) => setP((s) => ({ ...s, [k]: v }));
 
@@ -177,6 +222,7 @@ export default function App() {
       H: p.H,
       max_rsu: maxRsuOn ? maxRsu : null,
       limite_tiempo: topeOn ? tope : null,
+      lexicografico: lexOn,
     });
     setCandidatas(r.candidatas); setDesplegadas(r.desplegadas);
     const s = r.solver;
@@ -306,8 +352,32 @@ export default function App() {
           <div className="panel-hd"><span className="ttl">Parámetros</span></div>
           <div className="panel-bd">
             <div className="grouplabel">M1 · Escenario</div>
-            <Slider label="Vehículos" value={p.num_vehiculos} min={5} max={1000} step={5} onChange={set("num_vehiculos")} />
-            <Slider label="Duración" value={p.tiempo_min} min={1} max={180} unit=" min" onChange={set("tiempo_min")} />
+            <div className="presets">
+              {PRESETS.map((q) => {
+                const activo = p.num_vehiculos === q.num_vehiculos
+                  && p.tiempo_min === q.tiempo_min && p.step_min === q.step_min;
+                return (
+                  <button key={q.id} type="button" title={q.pista}
+                    className={`preset${activo ? " on" : ""}`} disabled={!!busy}
+                    onClick={() => setP((x) => ({ ...x, num_vehiculos: q.num_vehiculos,
+                      tiempo_min: q.tiempo_min, step_min: q.step_min }))}>
+                    {q.nombre}
+                    <em>{q.num_vehiculos.toLocaleString("es")}</em>
+                  </button>
+                );
+              })}
+            </div>
+            {/* Campo numérico, no deslizador: el rango abarca 6 órdenes de
+                magnitud y con una barra no se puede elegir un valor concreto. */}
+            <Num label="Vehículos" value={p.num_vehiculos} min={5} max={1000000}
+              onChange={set("num_vehiculos")} />
+            <Slider label="Duración" value={p.tiempo_min} min={1} max={240} unit=" min" onChange={set("tiempo_min")} />
+            {/* Los instantes son el multiplicador que decide el tamaño del MILP:
+                se muestra aquí para que se vea antes de lanzar, no después. */}
+            <div className="hint">
+              {Math.max(1, Math.floor(p.tiempo_min / p.step_min))} instantes
+              <span> · muestreo cada {p.step_min} min (M2)</span>
+            </div>
             <button className="cta" disabled={!!busy} onClick={generar}>▸ Generar escenario</button>
 
             <div className="grouplabel">RSU candidatas</div>
@@ -342,6 +412,17 @@ export default function App() {
               {maxRsuOn
                 ? `El modelo podrá desplegar como máximo ${maxRsu} RSU.`
                 : "Sin límite: el modelo puede usar todas las RSU candidatas."}
+            </p>
+
+            <label className="chk">
+              <input type="checkbox" checked={lexOn}
+                onChange={(e) => setLexOn(e.target.checked)} />
+              Resolver por prioridades (lexicográfico)
+            </label>
+            <p className="hint">
+              {lexOn
+                ? "CPLEX minimiza primero la cobertura y, entre las soluciones que la logran, la que use menos RSU."
+                : "Suma ponderada clásica: un solo objetivo, donde el peso relativo decide."}
             </p>
 
             <label className="chk">

@@ -382,17 +382,38 @@ def _precalcular_edificios_por_rsu(rsus: dict, edificios: dict,
     # edificios esto era el verdadero cuello de botella del pre-cálculo.
     edificios_prep = _preparar_edificios(edificios)
 
+    # Índice espacial de los edificios. Sin él, cada RSU recorría la lista
+    # COMPLETA de edificios: con 11 491 RSU y 165 137 edificios eso son ~1900
+    # millones de comparaciones en Python puro (medido: ~8 min). Con el grid,
+    # cada RSU solo mira las celdas que toca su círculo de cobertura.
+    cell = radio if radio > 0 else 1.0
+    grid = _grid_edificios(edificios_prep, cell)
+    inv = 1.0 / cell
+
     edificios_por_rsu = {}
     for rsu_id, rsu_datos in rsus.items():
         rx, ry = rsu_datos["x"], rsu_datos["y"]
         # Cuadrado envolvente del círculo de cobertura
         rx_min, ry_min, rx_max, ry_max = rx - radio, ry - radio, rx + radio, ry + radio
 
-        cercanos = [
-            (vertices, bbox) for (vertices, bbox) in edificios_prep
-            if not (rx_max < bbox[0] or bbox[2] < rx_min or
-                    ry_max < bbox[1] or bbox[3] < ry_min)
-        ]
+        # Celdas que cubre ese cuadrado. Un edificio puede estar en varias, así
+        # que se deduplica por identidad (los vértices son listas, no hashables).
+        vistos = set()
+        cercanos = []
+        cx0 = int(math.floor(rx_min * inv)); cx1 = int(math.floor(rx_max * inv))
+        cy0 = int(math.floor(ry_min * inv)); cy1 = int(math.floor(ry_max * inv))
+        for cx in range(cx0, cx1 + 1):
+            for cy in range(cy0, cy1 + 1):
+                for item in grid.get((cx, cy), ()):
+                    if id(item) in vistos:
+                        continue
+                    vistos.add(id(item))
+                    bbox = item[1]
+                    # Mismo filtro de solape que antes: el grid es un
+                    # superconjunto, aquí se afina para dar el MISMO resultado.
+                    if not (rx_max < bbox[0] or bbox[2] < rx_min or
+                            ry_max < bbox[1] or bbox[3] < ry_min):
+                        cercanos.append(item)
         edificios_por_rsu[rsu_id] = cercanos
 
     return edificios_por_rsu

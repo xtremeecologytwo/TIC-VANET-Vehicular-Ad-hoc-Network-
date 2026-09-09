@@ -57,6 +57,7 @@ TIC-VANET/
 │   │   ├── App.css          #    estilos de la consola + marco "plotter"
 │   │   ├── api/client.ts    #    cliente HTTP tipado de la API
 │   │   ├── design/tokens.css#    sistema de diseño (paleta, tipografía)
+│   ├── .env.example         #    plantilla: copiar a .env.local y poner VITE_CARTO_KEY
 │   │   └── components/
 │   │       ├── ScenarioMap.tsx  # mapa (react-leaflet): dibujo del área + capas
 │   │       └── ResultsTabs.tsx  # tablas de tuplas, matrices A/B, multisalto
@@ -64,6 +65,7 @@ TIC-VANET/
 │
 ├── backend/                 # ⚙️ Lógica VANET (Python puro, sin dependencia de UI)
 │   ├── descargar_osm.py     #    descarga el área desde OpenStreetMap
+│   ├── procesos.py          #    registro de subprocesos, para poder cancelarlos
 │   ├── sumo_pipeline.py     #    netconvert → polyconvert → randomTrips
 │   ├── parsear_xml.py       #    junctions/edificios, proyección, filtrado de RSU
 │   ├── simulacion_sumo.py   #    corre SUMO y parsea el FCD (posiciones por instante)
@@ -120,7 +122,14 @@ uvicorn api.main:app --reload --port 8000
 cd web
 npm run dev
 ```
-Luego abre **http://localhost:5173** en el navegador. (`uvicorn api.main:app`
+Luego abre **http://localhost:5173** en el navegador.
+
+> **Mapa base con marca de agua.** CARTO exige una API key para sus teselas
+> raster. Sin ella la app funciona igual, pero el mapa sale con *"API KEY
+> REQUIRED"* estampado. Para quitarla: copia `web/.env.example` a
+> `web/.env.local` y pon tu clave en `VITE_CARTO_KEY` (gratis en
+> [carto.com/basemaps/apikey](https://carto.com/basemaps/apikey)). El archivo
+> `.env.local` **no se versiona**. (`uvicorn api.main:app`
 significa: correr el objeto `app` definido en `api/main.py`.)
 
 **Atajo (Windows):** en vez de las dos terminales, ejecuta **`.\dev.ps1`** en la
@@ -171,12 +180,12 @@ mapa.
 | `GET /api/health` | Sonda de vida | — |
 | `GET /api/state` | Qué hay cargado (escenario/RSU/simulación, conteos, *bounds*) | — |
 | `GET /api/scenario/buildings` | Edificios del escenario en lat/lon | `convertir_xy_a_lonlat` |
-| `POST /api/scenario/generate` | **M1**: descarga OSM + SUMO + parseo | `descargar_mapa_osm`, `ejecutar_pipeline_sumo`, `parsear_junctions`, `parsear_edificios`, `obtener_proyeccion` |
+| `POST /api/scenario/generate` | **M1**: corta lo que hubiera en marcha, descarga OSM + SUMO + parseo | `descargar_mapa_osm`, `ejecutar_pipeline_sumo`, `parsear_junctions`, `parsear_edificios`, `obtener_proyeccion` |
 | `POST /api/rsu/filter` | Filtra junctions → RSU candidatas | `filtrar_junctions_rsu` |
 | `POST /api/simulate` | **M2**: FCD + LoS + tuplas V2I/V2V + matrices | `ejecutar_simulacion_sumo`, `parsear_fcd`, `generar_tuplas_visibilidad`, `generar_tuplas_v2v` |
 | `GET /api/timesteps` | Instantes disponibles para la animación | — |
 | `GET /api/connectivity?t=` | Vehículos + enlaces V2I/V2V de un instante | `convertir_xy_a_lonlat` |
-| `POST /api/optimize` | **M3**: construye CVR y resuelve (`H`, `max_rsu`, `limite_tiempo`) | `exportar_dat_desde_memoria`, `optimizar` |
+| `POST /api/optimize` | **M3**: construye CVR y resuelve (`H`, `max_rsu`, `limite_tiempo`, `lexicografico`) | `exportar_dat_desde_memoria`, `optimizar` |
 | `GET /api/tuples/v2i` · `/v2v` | Tuplas de conectividad (paginadas) | — |
 | `GET /api/multihop?t=&H=` | A, B, R_h, S_h, D_H, d y resumen de un instante | `analizar_timestep` |
 
@@ -401,6 +410,41 @@ conectividad se resuelve mucho antes que la de recuento.
 
 ## ⚙️ Backend — Documentación Detallada
 
+<a id="cancelar"></a>
+
+### 📁 `backend/procesos.py` — cortar lo que esté corriendo
+
+Las herramientas de SUMO tardan **minutos**, y los endpoints de la API son
+síncronos: FastAPI los ejecuta en un hilo del *threadpool*… y **un hilo de Python
+no se puede interrumpir desde fuera**. Consecuencia real, vista en consola:
+
+```
+INFO: Waiting for background tasks to complete. (CTRL+C to force quit)
+INFO: Finished server process [15332]
+```
+
+Decía "Finished", pero el proceso seguía vivo **una hora después con 2,2 GB**.
+Ctrl+C no servía, y pulsar "Generar escenario" otra vez dejaba dos corridas
+peleándose por la CPU y la RAM.
+
+La salida es no depender del hilo: lo que consume la máquina es el
+**subproceso**, y a un subproceso **sí** se le puede matar. `procesos.py` lleva
+la cuenta de los que están vivos:
+
+- `correr(cmd, timeout, cwd, etiqueta)` sustituye a `subprocess.run` y registra
+  el proceso. Se comporta igual —devuelve `CompletedProcess`, lanza
+  `CalledProcessError` y `TimeoutExpired`— así que el manejo de errores existente
+  no cambia.
+- `cancelar_todo()` mata lo registrado y devuelve **qué** cortó, para que quede
+  dicho en el log en vez de parecer magia.
+
+`POST /api/scenario/generate` lo llama antes de empezar. Verificado con un
+`netconvert` real: el hilo bloqueado se libera **al instante**.
+
+> **En Windows hay que matar el ÁRBOL, no el proceso.** `randomTrips.py` es un
+> Python que lanza `duarouter.exe` como hijo; matar solo al padre dejaba a
+> `duarouter` huérfano consumiendo **5 GB**. Por eso se usa `taskkill /F /T`.
+
 ### 📁 `backend/descargar_osm.py`
 
 Este módulo gestiona la comunicación con la API REST de OpenStreetMap para descargar los datos geográficos crudos.
@@ -415,7 +459,7 @@ Valida que las coordenadas del Bounding Box estén dentro de rangos geográficos
 1. **Rango de longitud:** Verifica que ambas longitudes estén en `[-180°, 180°]`
 2. **Rango de latitud:** Verifica que ambas latitudes estén en `[-90°, 90°]`
 3. **Orden lógico:** Verifica que `min < max` para ambos ejes
-4. **Tamaño del área:** Calcula `(max_lon - min_lon) × (max_lat - min_lat)` y rechaza áreas mayores a `0.25°²` (≈**3.000 km²** cerca del ecuador, ya que 1° ≈ 111 km y 0.25°² ≈ 55 km × 55 km). Esto previene solicitudes demasiado grandes que la API de OSM rechazaría (límite de ~50,000 nodos).
+4. **Tamaño del área:** Calcula `(max_lon - min_lon) × (max_lat - min_lat)` y rechaza áreas mayores a `MAX_AREA_DEG2` (**1.5°²**). No es un límite de Overpass sino un tope de sensatez: por encima de eso el `.net.xml` supera el medio GB y la optimización deja de ser tratable.
 
 **Parámetros:**
 - `min_lon` (float): Longitud mínima del Bounding Box
@@ -429,23 +473,104 @@ Valida que las coordenadas del Bounding Box estén dentro de rangos geográficos
 
 #### `descargar_mapa_osm(min_lon, min_lat, max_lon, max_lat, output_dir) → (str|None, str|None)`
 
-Descarga el archivo `.osm` (formato XML) desde la API pública de OpenStreetMap.
+Descarga los archivos `.osm` del área usando la **Overpass API**, con una
+estrategia pensada para que funcionen áreas del tamaño de una ciudad.
 
-**Funcionamiento interno:**
-1. Llama a `validar_coordenadas()` como primera línea de defensa
-2. Crea el directorio `output/` si no existe (`os.makedirs(exist_ok=True)`)
-3. Construye la URL de la API: `https://api.openstreetmap.org/api/0.6/map?bbox=left,bottom,right,top`
-4. Realiza la solicitud HTTP GET con `requests.get(url, timeout=120)`
-5. Si `status_code == 200`, escribe el contenido binario en `output/map.osm`
-6. Verifica que el archivo no sea menor a 100 bytes (indicaría área sin datos)
+**1. Pide solo lo que el proyecto usa.** Antes la consulta traía *todo* el
+contenido del rectángulo (`node`/`way`/`relation` sin filtro): árboles,
+comercios, límites administrativos, ríos… que SUMO descartaba igualmente. Ahora
+pide únicamente:
 
-**Manejo de errores por código HTTP:**
-- `400 Bad Request`: Coordenadas incorrectas o área demasiado grande
-- `509 Bandwidth Limit Exceeded`: Demasiadas solicitudes al servidor OSM
-- `Timeout (120s)`: El servidor no respondió a tiempo
-- `ConnectionError`: Sin acceso a internet
+| Etiqueta | Para qué |
+|---|---|
+| `way["highway"]` | la red vial que consume `netconvert` |
+| `way["building"]` + `relation["building"]` | los obstáculos de la línea de vista (`polyconvert`) |
+| `relation["type"="restriction"]` | giros prohibidos: mejoran la red y pesan casi nada |
 
-**Retorna:** `(ruta_archivo, None)` en éxito, o `(None, "mensaje de error")` en fallo.
+**2. Separa calles y edificios en dos descargas, y las lanza EN PARALELO.**
+Medido sobre el área Quito–Sangolquí (0,34° × 0,20°): las calles solas son
+**61 MB y bajan en 8 s**, mientras que pedir los edificios de golpe devuelve
+**504**. Los edificios son la parte pesada, y separarlos evita que arrastren a
+las calles.
+
+Son dos consultas independientes, así que van en un `ThreadPoolExecutor` de dos
+hilos en vez de una detrás de otra. Medido sobre un área de Quito: **114 s las
+calles y 37 s los edificios, 151 s en serie**; en paralelo el coste es el de la
+más lenta. No se paraleliza más porque Overpass admite dos peticiones
+simultáneas por IP y pasarse provoca `429`.
+
+**2 bis. Cachea lo descargado, indexado por bbox.** Overpass era el **74 % del
+tiempo de M1** y devuelve lo mismo cada vez para un área dada. Repetir el mismo
+escenario cambiando vehículos o duración —lo que se hace constantemente al
+calibrar— ya no descarga nada: los `.osm` se copian de `.osm_cache/`. Verificado
+sobre un área real del centro de Quito, con los ficheros comparados por SHA-256:
+
+| | tiempo | resultado |
+|---|---|---|
+| 1ª vez (descarga real, en paralelo) | 52,4 s | `map.osm` + `map_edificios.osm` |
+| 2ª vez, mismo bbox | **0,0 s** | **bytes idénticos** |
+
+La clave es el bbox redondeado a 1e-6° (~0,1 m), así que dos clics iguales dan
+la misma entrada y un rectángulo distinto se descarga igual que siempre. El
+`meta.json` se escribe **al final**: si el proceso muere a medias, la entrada
+queda sin meta y se ignora en vez de servir datos incompletos. Se controla con
+`OSM_CACHE_DIAS` (30 por defecto; **0 la desactiva**) y `OSM_CACHE_DIR`.
+
+**3. Trocea los edificios de forma recursiva.** Si un cuadrante falla, se parte
+en cuatro y se reintenta cada uno (hasta 3 niveles = 64 trozos). El troceado se
+adapta a la densidad: el campo baja de una vez y solo el núcleo urbano se
+subdivide.
+
+**4. Corre una carrera entre instancias de Overpass.** Las públicas se saturan a
+menudo y de forma **transitoria**: medido, la misma consulta que devolvió 504 en
+los cuatro servidores funcionó sin problema medio minuto después.
+
+Antes se recorrían **en un orden fijo**, escrito a mano tras una medición. Ese
+orden caduca: días después, los dos primeros de la lista estaban caídos y el
+tercero respondía en 22 s. Ahora la misma consulta se manda a `OVERPASS_CARRERA`
+instancias **a la vez** y se usa **la primera que conteste con datos**; las demás
+se abandonan (corren en hilos `daemon`, así que no retrasan nada). Si el grupo
+entero falla, se pasa al siguiente, y todo se repite `OVERPASS_REINTENTOS` rondas.
+
+Se limita a **2 en carrera** a propósito: son servidores públicos y gratuitos, y
+mandar la misma consulta pesada a los cuatro sería abusar.
+
+**El otro cambio es el tiempo de espera.** Estaba en 300 s por servidor, y
+medido, **todas** las peticiones que funcionan tardan entre **23 y 41 s** — ninguna
+se acerca a 300. Bajarlo a **120 s** deja un margen de 3× sobre la más lenta que
+triunfó y abandona a un servidor colgado en la quinta parte de tiempo.
+
+Las dos cosas juntas, sobre la misma área del centro de Quito:
+
+| | Descarga |
+|---|---|
+| Orden fijo, timeout 300 s | 52,4 s |
+| **Carrera de 2, timeout 120 s** | **6,8 s** (7,7×) |
+
+Y el peor caso —cuando de verdad no hay nada que hacer— baja de **60,7 minutos**
+colgado (4 servidores × 300 s × 3 rondas) a **12,7**.
+
+> **Lo que NO funciona: trocear el área.** Se probó, porque parece lo natural, y
+> los datos lo desmienten: el coste de Overpass es **por petición, no por
+> tamaño**. Peticiones de 0,0028°² y de 0,0051°² tardan lo mismo (23–41 s), y
+> hasta un trozo diminuto —el 2 % del lado— tarda 22 s. Esos segundos son **cola
+> de espera**, no cálculo. Así que más trozos = más colas: 9 trozos secuenciales
+> tardaron 300 s y 16 trozos, 476 s. En paralelo es aún peor, porque dispara
+> `429` (límite de ritmo) y `504`. El troceado recursivo que queda en el código
+> se usa **solo como reacción a un fallo**, no de entrada.
+
+> ⚠️ **No añadir instancias regionales.** `overpass.osm.ch` solo tiene datos de
+> Suiza: responde `200` con un documento vacío, que parece éxito y no lo es. Por
+> eso se comprueba que la respuesta contenga vías antes de aceptarla.
+
+**Retorna:** `(rutas, None)` en éxito, donde `rutas` es una **cadena con varios
+archivos separados por comas** (`map.osm,map_edificios.osm,…`), que es
+exactamente el formato que aceptan `netconvert` y `polyconvert` en `--osm-files`.
+No se fusionan los XML: las herramientas de SUMO ya admiten listas.
+
+Si se descargan las calles pero **ningún** edificio, la función **falla a
+propósito**: sin obstáculos, la línea de vista daría conectividad perfecta en
+todas partes — un resultado falso que parecería correcto.
 
 ---
 
@@ -470,6 +595,47 @@ Función privada que localiza el script `randomTrips.py` en el sistema.
 #### `ejecutar_pipeline_sumo(osm_path, output_dir) → list[dict]`
 
 Ejecuta los tres pasos del pipeline SUMO de forma secuencial. Si un paso falla, los siguientes **no se ejecutan** (fail-fast).
+
+<a id="vclass"></a>
+
+**Filtrado de la red por tipo de vía: probado y DESACTIVADO.**
+
+La consulta a Overpass pide `highway=*`, y en OSM eso incluye **aceras, sendas
+peatonales, escaleras y ciclovías**, por las que ningún coche circula. Filtrarlas
+aligera las cuatro etapas… pero **cambia el escenario**: las junctions de la red
+son las candidatas a RSU, así que quitar vías quita candidatas.
+
+Medido sobre un área de Quito (`map.osm` de 56 MB):
+
+| | Red | Junctions (candidatas) | `service` | `residential` |
+|---|---|---|---|---|
+| **sin filtro (por defecto)** | **520,0 MB** | **92 993** | **33 934** | **126 994** |
+| `remove pedestrian,bicycle` | 458,9 MB | 77 963 (−16 %) | 30 973 | 115 067 |
+| `keep passenger` | 366,8 MB | 55 354 (−40 %) | **0** | 105 713 |
+
+> ⚠️ **`--keep-edges.by-vclass passenger` es una trampa.** SUMO asigna por
+> defecto a `highway.service` un `vclass` que **no incluye `passenger`**, así que
+> borra **33 934 aristas** de callejones, accesos y vías de parking —calles por
+> las que los coches sí circulan— y con ellas el **40 % de las candidatas a RSU**.
+> Se llegó a activar y hubo que revertirlo. No usarlo.
+
+`--remove-edges.by-vclass pedestrian,bicycle` sí es correcto —quita solo lo que
+admite **únicamente** peatones o bicis, dejando en cero `footway`, `steps`,
+`cycleway` y `path`— pero aun así recorta un 16 % de las junctions a cambio de
+un ahorro modesto (12 % de la red). **Ante la duda, red completa**: que el
+escenario sea fiel importa más que ahorrar unos segundos.
+
+Queda disponible por si se quiere medir el compromiso:
+
+```powershell
+$env:SUMO_FILTRO_VIAS = "pedestrian,bicycle"   # vacío o sin definir = sin filtro
+```
+
+> **Los edificios no dependen de esto.** `polyconvert` los saca de
+> `map_edificios.osm` —una descarga aparte— y solo usa la red para proyectar
+> coordenadas. Comprobado: los `.poly.xml` generados con una red y con la otra
+> tienen los **mismos 132 678 polígonos**, y las únicas 3 líneas distintas son la
+> marca de tiempo y los nombres de archivo del encabezado.
 
 **Paso 1 — netconvert:**
 
@@ -497,7 +663,10 @@ polyconvert --net-file output/mapa.net.xml --osm-files output/map.osm \
 **Paso 3 — randomTrips:**
 
 ```bash
-python randomTrips.py -n output/mapa.net.xml -r output/mapa.rou.xml -e <end_time> -p <periodo_s>
+python randomTrips.py -n output/mapa.net.xml -r output/mapa.rou.xml \
+    -e <end_time> -p <periodo_s> \
+    --duarouter-routing-threads <N> --duarouter-routing-algorithm CH \
+    --no-validate
 ```
 
 - `-n`: Archivo de red vial de entrada
@@ -505,18 +674,121 @@ python randomTrips.py -n output/mapa.net.xml -r output/mapa.rou.xml -e <end_time
 - `-e <end_time>`: Tiempo final de generación de vehículos. Se calcula como `end_time = num_vehiculos × periodo_salida` (en segundos), que equivale a la duración total
 - `-p <periodo_s>`: Periodo de salida en **segundos** entre vehículos
 - Se ejecuta con `sys.executable` para usar el mismo intérprete Python del entorno virtual
-- **Parámetros configurables (UI):** `num_vehiculos` (5–200, **default 100**) y `tiempo_simulacion` en **minutos** (1–180, **default 120 min** = 2 h). El `periodo_salida` ya **no se elige a mano**: se calcula automáticamente como `tiempo_simulacion / num_vehiculos` para repartir todos los autos a lo largo de la simulación (tráfico continuo)
+- **Parámetros configurables (UI):** `num_vehiculos` (5–1 000 000, **default 100**) y `tiempo_simulacion` en **minutos** (1–240, **default 120 min** = 2 h). El `periodo_salida` ya **no se elige a mano**: se calcula automáticamente como `tiempo_simulacion / num_vehiculos` para repartir todos los autos a lo largo de la simulación (tráfico continuo)
+
+<a id="paralelismo"></a>
+
+**Las dos últimas opciones son las que evitan que M1 se eternice.** `randomTrips`
+no calcula las rutas: delega en **`duarouter`**, que resuelve *un camino mínimo
+por vehículo* sobre toda la red. Y `duarouter` por defecto va **monohilo y con
+dijkstra**. Medido sobre un escenario real de 50 000 vehículos y una red de
+379 MB: **101 % de CPU —un solo núcleo de 16— durante más de una hora**.
+
+`randomTrips` reenvía a `duarouter` cualquier opción con el prefijo
+`--duarouter-` (mecanismo `allowed_programs` de `sumolib`), así que se le pasan
+dos cosas distintas:
+
+| Opción | Qué cambia |
+|---|---|
+| `--routing-threads N` | Reparte las consultas de ruta entre N hilos |
+| `--routing-algorithm CH` | Jerarquías de contracción: **preprocesa la red una vez** y luego cada camino mínimo sale casi gratis |
+| `--no-validate` | Quita la **segunda pasada completa** de `duarouter` (ver abajo) |
+
+> **CH no cambia ni un resultado.** Igual que A\*, es un algoritmo **exacto**:
+> devuelve los mismos caminos mínimos que dijkstra, solo que precalculando.
+> Comprobado: A\* y CH escribieron **exactamente las mismas 9 884 rutas**.
+
+**A\* frente a CH**, sobre una red real de 442 MB con 16 hilos:
+
+| Viajes | `astar` | `CH` | |
+|---|---|---|---|
+| 500 | 93,5 s | 90,0 s | 1,04× |
+| 2 000 | 115,8 s | 98,3 s | 1,18× |
+| 10 000 | 198,1 s | **101,4 s** | **1,95×** |
+
+Ajustando `T(n) = fijo + n · coste_por_viaje`:
+
+| | Coste fijo | Por viaje |
+|---|---|---|
+| `astar` | 95,2 s | 0,0103 s |
+| **`CH`** | 97,5 s | **0,00039 s** (26× más barato) |
+
+El preproceso de CH cuesta ~2 s y a partir de ahí cada ruta es casi gratis.
+Extrapolado a **50 000 viajes: 610 s → 117 s (5,2×)**. Gana en todos los
+tamaños medidos, así que —a diferencia de los hilos— no necesita umbral. Los
+~95 s fijos son **cargar la red**, no el algoritmo.
+
+**La segunda pasada de `duarouter`.** `randomTrips` trae `validate=True` por
+defecto, y eso ejecuta `duarouter` **dos veces** sobre los mismos viajes: una
+para producir las rutas y otra con `--write-trips` para comprobar cuáles son
+válidas. Confirmado viendo ambos procesos vivos a la vez. En una corrida real
+de 50 000 vehículos esa segunda pasada costó **~800 s** y **no cambió el
+resultado**: el rutado va antes que la validación, así que el `.rou.xml` ya
+estaba escrito. Se desactiva con `--no-validate`; a cambio salen algunos
+vehículos menos de los pedidos (los irrutables), y el pipeline **reporta el
+número real** en vez de repetir el pedido.
+
+> ⚠️ **Cuidado con `--` en las rutas de archivo.** `randomTrips` escribe la
+> línea de comandos dentro de un **comentario XML**, y XML prohíbe `--` ahí.
+> Si alguna ruta lleva doble guion, el `trips.trips.xml` sale inválido y
+> `duarouter` falla con `'--' sequence is illegal in comment` —devolviendo
+> `rc=0` y un archivo vacío, que parece éxito—. Costó varias mediciones dadas
+> por buenas antes de descubrirlo.
+
+**Medido sobre la red real del escenario** (`mapa.net.xml` de 397 MB, 2 000
+vehículos en 180 min, máquina de 16 núcleos), comprobando que ambas
+configuraciones escriben las **2 000 rutas**:
+
+| | Tiempo | Rutas escritas |
+|---|---|---|
+| `dijkstra`, 1 hilo (antes) | 540,2 s | 2 000 / 2 000 |
+| **`astar`, 16 hilos (ahora)** | **352,1 s** | 2 000 / 2 000 |
+| | **1,53×** | |
+
+**Repartir tiene un coste fijo**, y no es pequeño: cada hilo monta su propia
+estructura de rutado sobre la red entera. Ajustando `T(n) = fijo + n · coste_por_viaje`
+con dos puntos medidos (n = 200 y n = 2 000):
+
+| | Coste fijo | Por viaje |
+|---|---|---|
+| `dijkstra`, 1 hilo | 125 s | 0,2074 s |
+| `astar`, 16 hilos | **220 s** | **0,0659 s** |
+
+Los 16 hilos cuestan **95 s extra de arranque** pero rutan **3,15× más rápido
+por viaje**. El punto de equilibrio está en `95 / (0,2074 − 0,0659) ≈ 670
+viajes`, y se comprobó midiendo: **con 200 vehículos paralelizar sale peor**
+(166,8 s → 233,5 s). Extrapolado a 50 000 vehículos, en cambio: **175 min →
+59 min (3,0×)**.
+
+Por eso `_hilos()` recibe el número de viajes y devuelve **1 por debajo de
+`UMBRAL_HILOS`** (700 por defecto, configurable con `SUMO_UMBRAL_HILOS`). El
+umbral no es un número redondo elegido a ojo: es el corte de esas dos rectas. A*
+se deja siempre, porque explora menos arcos también con un solo hilo.
+
+> ⚠️ **La memoria sí escala con los hilos.** Cada hilo mantiene su propio estado
+> de rutado sobre la red: medido, `duarouter` pasó de ~1 GB con 1 hilo a
+> **6,8 GB con 16** sobre esta red de 397 MB. En una máquina con poca RAM hay
+> que bajar `SUMO_HILOS`.
+
+La misma idea se aplica a **M2**: la simulación se lanza con `sumo --threads N`,
+que reparte el movimiento de los vehículos. Con pocos vehículos no compensa (el
+reparto cuesta más que el cálculo), pero con decenas de miles es donde se va el
+tiempo del módulo.
+
+El número de hilos sale de `_hilos()` en
+[`sumo_pipeline.py`](backend/sumo_pipeline.py): usa **todos los núcleos** salvo
+que se fije `SUMO_HILOS`.
 
 **Ejecución con `subprocess.run()`:**
 - `check=True`: Lanza `CalledProcessError` si el código de retorno no es 0
 - `capture_output=True`: Captura stdout y stderr para diagnóstico
 - `text=True`: Decodifica la salida como texto (no bytes)
-- `timeout`: Mata el proceso si tarda demasiado. **120 s** para `netconvert` y `polyconvert`; **300 s** para `randomTrips` (puede tardar más al generar muchos vehículos)
+- `timeout`: Red de seguridad para que la petición HTTP no se cuelgue si una herramienta se atasca. Lo fija `_timeout()` a partir de `SUMO_TIMEOUT_S`; **por defecto no hay límite** (`TIMEOUT_POR_DEFECTO = 0.0`), porque con una ciudad entera cualquier tope fijo se queda corto y corta corridas legítimas
 
 **Manejo de excepciones por paso:**
 - `FileNotFoundError`: El ejecutable no está en el PATH
 - `CalledProcessError`: El comando retornó un código de error (se muestra `stderr[:500]`)
-- `TimeoutExpired`: El proceso excedió su tiempo límite (120 s / 300 s según el paso)
+- `TimeoutExpired`: El proceso excedió `SUMO_TIMEOUT_S`, si se definió
 
 **Retorna:** Lista de diccionarios `[{"paso": str, "exito": bool, "mensaje": str}, ...]`
 
@@ -554,6 +826,12 @@ Extrae las intersecciones viales útiles del archivo `mapa.net.xml`.
 ```
 
 > **Nota:** Las coordenadas `x`, `y` están en el **sistema proyectado de SUMO** (metros UTM con offset), no en lat/lon. Para visualizarlas en un mapa se necesita la función `convertir_xy_a_lonlat()`.
+
+> ⚡ **Lectura en streaming.** El recorrido usa `_iter_elementos()`, un envoltorio
+> sobre `ET.iterparse()` que va descartando cada elemento tras leerlo. Con
+> `ET.parse()` el árbol completo del `.net.xml` de una ciudad (565 MB medidos en
+> Quito) ocupa varios GB de objetos Python. Ahora la memoria es constante sea cual
+> sea el tamaño del archivo.
 
 ---
 
@@ -604,6 +882,11 @@ SUMO usa internamente una proyección UTM (Universal Transverse Mercator) para c
 - **`origBoundary`** → `[lon_min, lat_min, lon_max, lat_max]` — Límites en coordenadas geográficas originales
 
 **Retorna:** `{"orig": [4 floats], "conv": [4 floats]}` o `None` si hubo error.
+
+> ⚡ **Se corta en cuanto encuentra `<location>`.** Ese elemento está en las
+> primeras líneas del `.net.xml`, pero antes se parseaba el archivo **entero**
+> para leer sus cuatro atributos: **17,3 s** con la red de Quito. Con `iterparse`
+> y un `break`, **0,0 s**.
 
 ---
 
@@ -709,7 +992,7 @@ El filtrado se implementa en la función `filtrar_junctions_rsu()` y consta de d
 
 ```python
 vecinos = {}
-for edge in root.findall("edge"):
+for edge in _iter_elementos(net_xml_path, "edge"):   # streaming, no ET.parse
     if edge.get("function") == "internal":
         continue  # Ignorar edges internas de SUMO
     a, b = edge.get("from"), edge.get("to")
@@ -719,6 +1002,14 @@ for edge in root.findall("edge"):
     vecinos.setdefault(b, set()).add(a)
 grados = {j: len(vs) for j, vs in vecinos.items()}  # nº de vecinos únicos
 ```
+
+> ⚡ **El resultado se cachea.** Los grados dependen solo de la red, no de los
+> parámetros del filtro, pero antes se recalculaban en **cada** clic de *Filtrar
+> RSU*: **18,6 s por clic** con la red de Quito. Ahora se guardan con clave
+> `(ruta, tamaño, fecha)`, así que probar varias combinaciones de grado y radio
+> es instantáneo, y la caché se invalida sola al regenerar el escenario.
+> Medido: `grado=4, radio=20` seguido de `grado=5, radio=50` pasó de
+> **66 s + 66 s** a **66 s + 0,0 s**.
 
 Se recorre cada `<edge>` no interna, se descartan lazos, y cada extremo se agrega al conjunto de vecinos del otro; el grado final es el **número de vecinos únicos**. De este modo una calle bidireccional (2 edges) cuenta como **un solo vecino**, alineando el grado con la tabla de arriba (grado 4 = cruce de 2 calles = 4 vecinos). El `clustering` greedy ordena por grado descendente y, ante empate, por id de junction ascendente, para que corridas repetidas den el **mismo** conjunto de RSU (resultado determinista).
 
@@ -1019,6 +1310,14 @@ Sin optimizar, el cálculo requeriría del orden de `130 vehículos × 31 instan
 | **Pre-filtro por distancia²** | Descartar pares fuera de radio sin calcular la raíz cuadrada | el `sqrt` solo se hace en los pares reales |
 
 Con estas optimizaciones el motor de conectividad **escala hasta 1000 vehículos**. Medido en el equipo de referencia (Ryzen 7 7735HS), el **peor caso extremo** de 10 instantes × **1000 vehículos activos** cada uno (≈5000 edificios, ≈440 RSU) toma **≈4.5 s** en total (V2I ≈3.6 s + V2V ≈0.9 s). En tráfico real solo hay una fracción de vehículos activos por instante, así que es aún más rápido. Todas las optimizaciones son **exactas**: producen exactamente el mismo conjunto de tuplas que la versión sin optimizar (verificado por comparación de conjuntos).
+
+> ⚠️ **Ese número corresponde a ese escenario.** El coste crece con el nº de
+> edificios y de RSU candidatas, que son los dos factores que más cambian al
+> ampliar el área: un área metropolitana llega a ~190 000 edificios y >12 000
+> candidatas, dos órdenes de magnitud por encima del caso medido. Los índices
+> espaciales evitan que sea cuadrático, pero M2 se nota. Si M2 tarda demasiado,
+> el mando efectivo es el mismo que para M3: **reducir el área o filtrar más
+> candidatas**.
 
 ---
 
@@ -1386,6 +1685,115 @@ Cuatro lecturas:
 > decreciente. **La forma exacta depende del escenario; lo robusto es la
 > tendencia**: más infraestructura, menos multisalto.
 
+<a id="lex"></a>
+
+### Cómo se resuelve: multi-objetivo lexicográfico
+
+El modelo tiene **tres criterios que compiten**: dejar al menor número de
+vehículos sin cobertura, usar pocas antenas y que el tráfico servido dé los menos
+saltos posibles. La Ec. 1 original los suma en un único objetivo, pero eso trae
+un problema práctico: **la tolerancia de CPLEX se aplica al total**. Como el total está dominado por las penalizaciones de desconexión,
+el 0,01 % de tolerancia equivale a un margen enorme *medido en antenas* —con una
+configuración anterior llegó a ser de **1 390 RSU**—, así que el solver paraba
+dentro de ese margen y devolvía muchas más de las necesarias. Además, cuál de
+los dos criterios pesaba más dependía de la relación `L · P[hmax] / Cost`.
+
+La solución es **no sumarlos**, sino dárselos a CPLEX con prioridades. En
+`docplex` es una sola llamada ([optimizar\_rsu.py](optimizacion/optimizar_rsu.py)):
+
+```python
+coste_instalacion  = mdl.sum(Sel[r] * Cost[r] for r in R)
+carga_desconectada = mdl.sum(L[t[0]][t[2]] * Rts[t] for t in CVR if t[1] == hmax)
+coste_trafico      = mdl.sum(Rts[t] * Ph(t[1]) * L[t[0]][t[2]]
+                             for t in CVR if t[1] != hmax)
+
+mdl.minimize_static_lex(
+    [carga_desconectada, coste_instalacion, coste_trafico],   # orden de prioridad
+    abstols=[0.0, 0.0, 0.0], reltols=[0.0, 0.0, 0.0],         # lexicográfico ESTRICTO
+)
+```
+
+CPLEX minimiza **1º** la carga que se queda sin cobertura; **entre todas las
+soluciones que alcanzan ese óptimo**, la que despliega **2º** menos RSU; y entre
+esas, la de **3º** menos saltos.
+
+Partir el tráfico en dos es exacto porque en este modelo `h == hmax` ocurre **si
+y solo si** `r == r_inf`: la única tupla con salto `hmax` es la que va al RSU
+artificial ([exportar\_dat.py](backend/exportar_dat.py)). No hay solape.
+
+> **Por qué las tolerancias van en cero.** Con los valores por defecto, CPLEX se
+> permite degradar un poco el primer objetivo al optimizar el segundo. En este
+> modelo "un poco" del primer objetivo puede ser **un vehículo desconectado**.
+
+**Lo que se gana (1): el número de RSU sale de la escala del total.** Pasa a
+optimizarse en la suya propia —unos miles de puntos en vez de millones—, así que
+el 0,01 % equivale a menos de una décima de antena.
+
+**Lo que se gana (2): `penal_desconexion` desaparece del modelo.** Con la
+desconexión en su propio nivel de prioridad, `P[hmax]` ya no aparece en ningún
+objetivo, y en la Ec. 4 tampoco porque esa restricción excluye a `r_inf`.
+Comprobado construyendo el modelo con `P[hmax] = 1000` y con `P[hmax] = 5` y
+comparando el SHA-256 del LP exportado:
+
+| | `penal = 1000` | `penal = 5` | |
+|---|---|---|---|
+| 2 niveles | `78f8371c22cbedcd` | `da71d300a6b36d9f` | distintos: **influye** |
+| **3 niveles** | `d52750d7cb4d2ce2` | `d52750d7cb4d2ce2` | idénticos: **inerte** |
+
+Deja de ser un parámetro que calibrar —"¿8, 100 o 1 000?"— y pasa a ser una
+decisión de prioridad, que sí se puede justificar. Por la misma razón, la
+**cobertura máxima queda garantizada por construcción**, no "mientras la
+penalización sea suficientemente grande".
+
+**Lo que cambia: la preferencia entre antenas y saltos se invierte.** Con dos
+niveles los saltos vivían *dentro* del primer objetivo, así que la calidad
+multisalto le ganaba al número de antenas. Con tres, entre dos despliegues de
+igual cobertura se prefiere el de menos antenas aunque obligue a más vehículos a
+conectarse por 2 o 3 saltos. Es una decisión de diseño deliberada —la
+infraestructura es dinero; los saltos son calidad de servicio— y se refleja en
+las cifras: igual cobertura, menos RSU, más multisalto.
+
+Medido sobre el mismo escenario (99 865 tuplas CVR, 7 108 RSU candidatas,
+`H = 3`, sin límite de MaxR), contra la suma ponderada y contra la versión
+intermedia de dos niveles:
+
+| | Suma ponderada | 2 niveles | **3 niveles** |
+|---|---|---|---|
+| **RSU desplegadas** | 792 | 779 | **767** |
+| Cobertura | 93,79 % | 93,79 % | **93,79 %** |
+| Pares desconectados | 556 | 556 | **556** |
+| Pares en multisalto | 66 | 63 | **82** |
+| Valor de la Ec. 1 | 5 652 540 | 5 652 380 | 5 652 450 |
+| Motor CPLEX | 8,2 s | 97,9 s | **203,7 s** |
+| Estado | `integer optimal, tolerance` | `multi-objective optimal` | `multi-objective optimal` |
+
+**Misma cobertura exacta —los mismos 556 pares desconectados en los tres— con 25
+antenas menos que la suma ponderada.** El precio son 16 pares más en multisalto
+(el nivel 3 es el último en optimizarse) y un motor 25× más lento, porque CPLEX
+resuelve tres problemas en secuencia. Aun así la optimización sigue siendo una de
+las etapas rápidas del flujo, muy por detrás de SUMO y del cálculo de línea de
+vista.
+
+> **Detalle revelador:** la suma ponderada obtiene el **peor** valor de la Ec. 1
+> de los tres, y eso es precisamente lo único que estaba minimizando. Paró dentro
+> dentro de su tolerancia relativa del 0,01 %, que sobre un total de 5,65
+> millones son ~565 puntos de margen; a `Cost = 10` por antena, eso son **56
+> antenas de holgura** que el solver tenía permitido no buscar. Las 25 de más que
+> devuelve caben de sobra ahí. Es el problema de escala descrito arriba, visto en
+> una sola cifra.
+
+**Lo que permite afirmar.** Con la suma ponderada el resultado era un compromiso
+cuyo peso relativo era una decisión del autor. Con la jerarquía se puede afirmar
+algo con estructura: *de entre todos los despliegues que dejan al mínimo posible
+de vehículos sin cobertura, este es el que usa menos RSU; y de entre esos, el que
+menos saltos exige*.
+
+Está **activo por defecto**. La casilla *"Resolver por prioridades"* del panel M3
+permite volver a la suma ponderada para comparar; la respuesta trae los tres
+objetivos por separado en `objetivos` —en orden de prioridad—, y `objetivo`
+re-evalúa la Ec. 1 sobre la solución encontrada para que el KPI siga siendo
+comparable entre modos y con corridas antiguas.
+
 <a id="pesos"></a>
 
 ### Los pesos del modelo y qué gobierna cada uno
@@ -1398,7 +1806,7 @@ definen el comportamiento del modelo:
 | `cap_real` | `300` | Capacidad de una RSU **en unidades de carga × saltos** |
 | `carga_default` | `10` | Carga `L` de cada vehículo (p. ej. Mbps) |
 | `Cost[r]` | `10` | Lo que cuesta instalar una antena |
-| `penal_desconexion` | `100` | `P[hmax]`: lo que paga un vehículo sin cobertura |
+| `penal_desconexion` | `1000` | `P[hmax]`: lo que paga un vehículo sin cobertura. **Solo se usa en la suma ponderada**: con el [lexicográfico de 3 niveles](#lex) es inerte |
 
 **Ojo con la capacidad:** la Ec. 4 consume `Rts · P_h · L`, no solo `L`. O sea, un
 vehículo servido a 2 saltos gasta **el doble** de capacidad que uno directo. Con
@@ -1409,6 +1817,14 @@ o 10 a 3, por instante.
 > de la Ec. 4, porque no es una antena sino "no tener cobertura". Ponerle un tope
 > haría el modelo infactible en vez de reportar la desconexión.
 
+> Con el [multi-objetivo lexicográfico](#lex) activo (por defecto), **ni el
+> número de RSU ni la cobertura dependen ya de estos pesos**: cada uno se
+> optimiza en su propio nivel de prioridad, y `penal_desconexion` no llega
+> siquiera a entrar en el modelo. Lo único que siguen gobernando es la Ec. 4
+> (capacidad) y, en el tercer nivel, cuántos saltos se aceptan. **Todo lo que
+> sigue en esta sección describe la suma ponderada**, que se conserva para
+> comparar; es el análisis que motivó pasar a la jerarquía.
+
 **La razón que de verdad manda.** No son los valores sueltos, sino cuántas antenas
 está dispuesto el modelo a pagar por rescatar un vehículo-instante:
 
@@ -1416,34 +1832,136 @@ está dispuesto el modelo a pagar por rescatar un vehículo-instante:
 antenas que paga = (P[hmax] − P_h) × L / Cost
 ```
 
-Con los valores actuales: `(100 − 1) × 10 / 10 = ` **99 antenas**. Como ningún
-vehículo alcanzable necesita 99 antenas dedicadas, en la práctica el modelo
+Con los valores actuales: `(1000 − 1) × 10 / 10 = ` **999 antenas**. Como ningún
+vehículo alcanzable necesita 999 antenas dedicadas, en la práctica el modelo
 **conecta a todos los que son físicamente alcanzables**, y los que quedan fuera
 son irreducibles (no ven ninguna candidata, ni directamente ni por multisalto).
 
-**Por qué 100 y no otro valor.** Medido sobre el mismo escenario (3691 pares,
-1649 candidatas, MaxR libre, tope 120 s), moviendo solo `penal_desconexion`:
+**Cómo se eligió.** Medido sobre el mismo escenario (3691 pares, 1649
+candidatas, MaxR libre, tope 120 s), moviendo solo `penal_desconexion`:
 
 | `P[hmax]` | RSU | Cobertura | Motor | Paga hasta |
 |---|---|---|---|---|
 | 8 | 249 | 96,23 % | 76,3 s | 7 antenas |
-| **100** (actual) | **249** | **96,23 %** | **15,2 s** | **99 antenas** |
-| 1000 | 252 | 96,23 % | 1,0 s | 999 antenas |
+| 100 | 249 | 96,23 % | 15,2 s | 99 antenas |
+| **1000** (actual) | **252** | **96,23 %** | **1,0 s** | **999 antenas** |
 
-`100` es el punto donde coinciden las dos propiedades deseables:
+La cobertura es la misma en los tres; lo que cambia es el tiempo y la precisión:
 
 - **Con 8** la garantía es frágil: si en otro mapa un vehículo necesitara 8
   antenas para ser alcanzado, el modelo lo abandonaría **sin avisar** — verías
-  menos cobertura y parecería que ese vehículo era imposible de conectar.
-- **Con 1000** sobra holgura: el margen del 0,01 % de `Z` crece con `Z`, y el
-  solver empieza a dejar antenas de más (252 en vez de 249) porque recortarlas ya
-  no le baja el objetivo lo suficiente.
+  menos cobertura y parecería que ese vehículo era imposible de conectar. Y
+  encima es el más lento (76 s), porque con un objetivo tan pequeño el margen del
+  0,01 % vale una décima de antena y el solver pelea por cada una.
+- **Con 1000** el solver cierra en **1 segundo** y la garantía de cobertura es
+  muy fuerte, a cambio de ~3 antenas de imprecisión sobre 250: el margen del
+  0,01 % de `Z` crece con `Z`, y recortar esas últimas antenas ya no le baja el
+  objetivo lo suficiente como para molestarse.
 
-Además `100` resuelve **5 veces más rápido** que `8` dando la misma solución: con
-un objetivo tan pequeño, el solver tiene que pelear por cada antena.
+Es un intercambio deliberado: **se prioriza la garantía de cobertura y la
+velocidad sobre la exactitud del recuento de RSU**. Si en algún momento la cifra
+exacta de antenas fuera lo importante, `100` es el punto intermedio.
 
 Análisis completo en [`explicaciones/medicion_y_afinado.pdf`](explicaciones/)
 (no versionado).
+
+### Áreas grandes: descarga OSM y tiempos de SUMO
+
+La descarga pide a Overpass **solo lo que el proyecto usa** —`highway=*` para la
+red vial y `building=*` para los obstáculos de la línea de vista—, no todo el
+contenido del rectángulo. Eso reduce el volumen de forma drástica y es lo que
+permite bajar áreas metropolitanas.
+
+Además, calles y edificios se piden **por separado y en paralelo**, los
+edificios se **trocean en cuadrantes** cuando el servidor no puede con ellos, se
+prueban **varias instancias de Overpass** hasta que una responde, y **lo
+descargado se cachea por bbox** para que repetir el mismo área no vuelva a
+esperar. El detalle y las mediciones están en la ficha de
+`descargar_mapa_osm()`, en la sección *Backend — Documentación Detallada*.
+Resultado sobre el área Quito–Sangolquí: **168 MB en 71 s**.
+
+Los límites de tiempo de las herramientas de SUMO también son configurables,
+porque con una ciudad entera 300 s no alcanzan:
+
+```powershell
+$env:SUMO_TIMEOUT_S = "3600"     # 1 h por herramienta de SUMO (0 = sin límite)
+$env:SUMO_HILOS = "16"           # hilos de duarouter y de la simulación (0 = todos)
+$env:SUMO_UMBRAL_HILOS = "700"   # por debajo de N viajes no se paraleliza (sale peor)
+$env:OVERPASS_TIMEOUT_S = "300"  # lo que se le concede al servidor de Overpass
+$env:OVERPASS_REINTENTOS = "3"   # rondas completas sobre la lista de servidores
+$env:OVERPASS_CARRERA = "2"      # instancias que compiten a la vez por cada consulta
+$env:OVERPASS_HTTP_TIMEOUT_S = "120"  # espera máxima por servidor
+$env:OVERPASS_ESPERA_S = "20"    # pausa entre rondas (los 504 son transitorios)
+$env:MAX_EDIFICIOS_MAPA = "15000"  # OPCIONAL: limita cuántos edificios se DIBUJAN
+$env:OSM_CACHE_DIAS = "30"       # antigüedad máxima de la caché de .osm (0 = sin caché)
+$env:OSM_CACHE_DIR = "D:\osm"    # OPCIONAL: dónde vive la caché (por defecto .osm_cache/)
+uvicorn api.main:app --reload --port 8000
+```
+
+**Qué se optimizó para que M1 no se eternice.** Con la red de Quito el
+`.net.xml` pesa **565 MB** y se recorría entero varias veces:
+
+| | Antes | Ahora | Cómo |
+|---|---|---|---|
+| `obtener_proyeccion` | 17,3 s | **0,0 s** | `iterparse` + `break` al hallar `<location>` |
+| Re-filtrar RSU | 66 s cada vez | **0,0 s** | caché de grados por red |
+| Memoria durante el parseo | varios GB (árbol completo) | constante | lectura en streaming |
+| Descarga de Overpass | 151 s en serie | coste de la más lenta | vías y edificios **en paralelo** |
+| Repetir el mismo área | 151 s otra vez | **0,0 s** | [caché de `.osm` por bbox](#-backend--documentación-detallada) |
+| `duarouter` (rutas) | 1 núcleo + dijkstra | **N núcleos + A\*** | [paralelismo](#paralelismo) |
+
+**Cómo se repartía el tiempo de M1** antes del paralelismo, medido sobre un área
+de Quito (reconstruido desde las marcas de tiempo de los archivos de `output/`):
+
+| Sub-etapa | tiempo | % |
+|---|---|---|
+| **Overpass: vías** | 114 s | 56 % |
+| **Overpass: edificios** | 37 s | 18 % |
+| netconvert | 10 s | 5 % |
+| polyconvert | 6 s | 3 % |
+| randomTrips (+ `duarouter`) | 34 s | 17 % |
+| Parseo junctions + edificios | 3 s | 1 % |
+| **Total** | **~204 s** | |
+
+Las dos descargas eran **el 74 % de M1**, y no eran cómputo: era la CPU parada
+esperando a un servidor público. De ahí que las dos primeras optimizaciones de
+la tabla ataquen eso y no el código.
+
+El reparto cambia por completo al subir los vehículos: `randomTrips` pasa a
+dominar, porque `duarouter` calcula un camino mínimo **por vehículo**. Medido en
+esa misma corrida de 50 000 vehículos sobre la red de 379 MB:
+
+| Herramienta | Tiempo | % de la etapa |
+|---|---|---|
+| netconvert | 57 s | 2 % |
+| polyconvert | 21 s | 0,7 % |
+| **randomTrips** (→ `duarouter`) | **2 743 s** y seguía | **97 %** |
+
+Ni `netconvert` ni `polyconvert` admiten hilos —no tienen la opción— pero es
+irrelevante: aunque costaran cero se ahorrarían 78 s de casi una hora. Los dos
+que sí la tienen, `duarouter` y `sumo`, son justo los que dominan, y son los que
+se paralelizan.
+
+> El cronómetro imprime **una línea por herramienta**. Antes las agrupaba en un
+> solo `SUMO (netconvert/polyconvert/trips)`, y con ese número junto es imposible
+> saber cuál cuesta — llevaba a culpar a `polyconvert`, que es el 0,7 %.
+
+> **Sobre el peso del mapa.** Con un área metropolitana la respuesta de
+> edificios ronda los **27 MB (165 000 polígonos)** y el navegador va lento al
+> dibujarla. Se probó enviar un muestreo, pero el mapa deja de verse como es:
+> por eso **por defecto se envían todos**. Si en algún momento el navegador se
+> vuelve inusable, `MAX_EDIFICIOS_MAPA` activa el muestreo uniforme (0 = sin
+> tope, que es el valor por defecto). En ningún caso afecta al cálculo: la línea
+> de vista usa siempre el conjunto completo del backend.
+
+> **Dónde está el verdadero muro.** Subir estos límites hace que la descarga y
+> SUMO terminen, pero el coste se traslada a la optimización, que escala de forma
+> **combinatoria** con el nº de RSU candidatas (ver
+> [Experimento: cobertura frente a presupuesto de RSU](#experimento-cobertura-frente-a-presupuesto-de-rsu)).
+> Para un área metropolitana hay que subir el **radio de clúster** a 200–500 m y
+> el **grado mínimo** a 5–6: con un radio de 20 m se generan candidatas cada 20
+> metros en toda la ciudad, que no es un despliegue realista ni un problema
+> resoluble.
 
 ### Cómo cambiar la zona geográfica
 
@@ -1636,9 +2154,12 @@ python -m backend.exportar_dat --todos-los-rsu       # incluir todos los candida
 | `--max-rsu` | sin límite | `MaxR`: nº máximo de RSU reales a desplegar |
 | `--todos-los-rsu` | (off) | Incluir todos los RSU candidatos, no solo los conectados |
 
-### Ejemplo de salida (con los datos reales de `output/`)
+### Ejemplo de salida (escenario de referencia)
 
-Con la simulación de ejemplo (31 instantes, 132 vehículos, 278 RSU candidatos [config. de referencia, grado 4 / radio 20 m], `H=3`, `MaxR=10`) el módulo genera:
+Lo que sigue ilustra **el formato**, con las cifras de un escenario pequeño del
+Centro Histórico (31 instantes, 132 vehículos, 278 RSU candidatas con grado 4 /
+radio 20 m, `H=3`, `MaxR=10`). Los números de tu `output/` serán otros; el
+formato es el mismo:
 
 ```
 ============================================================
@@ -1754,13 +2275,14 @@ Con datos reales, el solver devuelve los **ids de RSU del backend** a desplegar 
 
 ## 📚 Scripts didácticos (para entender y explicar el proyecto)
 
-Además de la aplicación, el proyecto incluye **3 scripts de consola** pensados para *entender* y *explicar* cómo funciona el pipeline, de lo más simple a lo más real. Todos usan las **funciones reales** del proyecto (`backend/visibilidad.py` y `backend/multisalto.py`), así que no son cálculos "de mentira".
+Además de la aplicación, el proyecto incluye **4 scripts de consola** pensados para *entender* y *explicar* cómo funciona el pipeline, de lo más simple a lo más real. Todos usan las **funciones reales** del proyecto (`backend/visibilidad.py` y `backend/multisalto.py`), así que no son cálculos "de mentira".
 
 | Script | Qué muestra | Cuándo usarlo |
 |--------|-------------|---------------|
 | [`mini_proyecto_vanet.py`](mini_proyecto_vanet.py) | **Todo el flujo** en miniatura: posiciones de coches + 1 edificio → línea de vista (LoS) → tuplas → Matriz A (V2V) y Matriz B (V2I) → multisalto (R, S, D, d) | Para explicar el proyecto **completo** de principio a fin |
 | [`ejemplo_multisalto.py`](ejemplo_multisalto.py) | Solo la parte de **multisalto**, con A y B dadas a mano (cadena V1→V2→V3→RSU + un coche aislado) | Para entender **solo las matrices** y los saltos |
 | [`explicar_multisalto.py`](explicar_multisalto.py) | El multisalto sobre un **instante real** de tu simulación (lee `output/*.json`) | Para demostrar que funciona con **datos verdaderos** |
+| [`optimizacion/explicar_optimizacion.py`](optimizacion/explicar_optimizacion.py) | La **optimización** paso a paso sobre el micro-ejemplo: tuplas CVR, modelo, restricciones y por qué el solver eligió esas RSU | Para explicar **el Módulo 3** sin la complejidad del caso real |
 
 **Cómo ejecutarlos:**
 
@@ -1769,6 +2291,9 @@ python mini_proyecto_vanet.py          # demo completa (escenario de juguete)
 python ejemplo_multisalto.py           # demo del multisalto
 python explicar_multisalto.py          # instante real (elige uno automáticamente)
 python explicar_multisalto.py 120 3    # instante t=120 s con H=3 saltos
+
+python optimizacion/explicar_optimizacion.py   # la optimización explicada
+SIN_PAUSA=1 python optimizacion/explicar_optimizacion.py   # sin pausas entre pasos
 ```
 
 > Los dos primeros (`mini_proyecto_vanet.py` y `ejemplo_multisalto.py`) son **autocontenidos**: no necesitan haber corrido la simulación. `explicar_multisalto.py` sí necesita los JSON de `output/`.
@@ -1873,7 +2398,9 @@ Es el "cerebro" de la interfaz. Contiene:
     `max_rsu: <número>` si la casilla *"Limitar nº de RSU (MaxR)"* está encendida,
     y `null` si no (comportamiento por defecto, sin límite efectivo); igual con
     `limite_tiempo` y la casilla *"Limitar el tiempo del solver"* (`null` = sin
-    tope). Con la respuesta llena también los KPIs **Solver** y **Tiempo solver**
+    tope), y con `lexicografico` y la casilla *"Resolver por prioridades"*
+    (ver [multi-objetivo lexicográfico](#lex)). Con la respuesta llena también
+    los KPIs **Solver** y **Tiempo solver**
     (ver [El límite de tiempo del solver](#solver)).
 
 Los KPIs admiten dos formas: un valor suelto (`"RSU desplegadas": 12`) o un objeto
@@ -1889,8 +2416,13 @@ Los KPIs admiten dos formas: un valor suelto (`"RSU desplegadas": 12`) o un obje
 
 ### `web/src/components/ScenarioMap.tsx` — el mapa
 
-Envuelve el `<MapContainer>` de react-leaflet (fondo CARTO claro) dentro del marco
-*plotter* (esquinas). Piezas:
+Envuelve el `<MapContainer>` de react-leaflet (fondo CARTO Voyager) dentro del
+marco *plotter* (esquinas). Piezas:
+
+- **`URL_TILES`** — la URL del mapa base. CARTO exige API key en sus teselas
+  raster; la clave se lee de `import.meta.env.VITE_CARTO_KEY` (definida en
+  `web/.env.local`, no versionado). Si no está definida, el mapa **carga igual**
+  pero con la marca de agua *"API KEY REQUIRED"*.
 
 - **`DrawRectangle`** — selección del área **por dos clics** (sin `leaflet-draw`,
   que se rompe con Leaflet moderno). Usa `useMapEvents`: el 1er clic fija una
@@ -1936,7 +2468,8 @@ Todos los archivos se generan en la carpeta `output/`:
 
 | Archivo | Formato | Generado por | Contenido |
 |---------|---------|-------------|-----------|
-| `map.osm` | XML (OSM) | `descargar_osm.py` | Datos geográficos crudos: nodos, vías, relaciones, edificios, POIs |
+| `map.osm` | XML (OSM) | `descargar_osm.py` | La **red vial** cruda (`highway=*` + restricciones de giro) |
+| `map_edificios*.osm` | XML (OSM) | `descargar_osm.py` | Los **edificios**, en uno o varios archivos según haya hecho falta trocear |
 | `mapa.net.xml` | XML (SUMO) | `netconvert` | Red vial: junctions (intersecciones), edges (segmentos viales), connections (giros), traffic lights |
 | `mapa.poly.xml` | XML (SUMO) | `polyconvert` | Polígonos: edificios, parques, agua, uso del suelo con coordenadas proyectadas |
 | `mapa.rou.xml` | XML (SUMO) | `randomTrips.py` | Rutas vehiculares: pares origen-destino y secuencia de edges por ruta |
@@ -2007,8 +2540,23 @@ animación es fiel).
 - Un escenario a la vez en memoria (herramienta de un usuario).
 - Los tiempos del cronómetro se imprimen **solo en la consola** del backend y
   viven en la memoria del proceso: reiniciar `uvicorn` borra la sesión de medición.
-- Extensiones: filtros en las tablas de tuplas, círculos de cobertura de RSU,
-  integración con NS-3 para simular protocolos VANET.
+- **La optimización no escala a ciudades enteras.** El coste crece de forma
+  combinatoria con el nº de RSU candidatas por la simetría entre ellas: con 3 244
+  candidatas y `MaxR` libre, una corrida tardó más de una hora. El mando efectivo
+  es filtrar más (grado mínimo y radio de clúster), no esperar.
+- **El mapa dibuja un muestreo de edificios** (`MAX_EDIFICIOS_MAPA`), porque
+  Leaflet no puede con ~190 000 polígonos. El cálculo sí usa todos.
+- **`duarouter` es lo que domina M1 con muchos vehículos**: un camino mínimo por
+  vehículo sobre toda la red. Se paraleliza y usa A\*, pero sigue creciendo con
+  el número de vehículos; los *presets* del panel M1 existen para no pedir más
+  carga de la que el escenario puede digerir.
+- **La descarga depende de instancias públicas de Overpass**, que se saturan a
+  diario. Se reintenta en varios servidores, pero para trabajo intensivo con
+  áreas grandes conviene un extracto local (p. ej. de Geofabrik).
+- Extensiones pendientes: integración con NS-3 para simular protocolos VANET;
+  cortes de simetría para el solver; y acelerar el cálculo de línea de vista y
+  las herramientas de SUMO, que son las dos etapas que dominan el tiempo total
+  en áreas grandes (40 % y 38 % respectivamente).
 
 ---
 

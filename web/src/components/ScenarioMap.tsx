@@ -9,6 +9,22 @@ import type { FeatureCollection } from "geojson";
 import type { BBox, LatLon, Rsu, ConnFrame } from "../api/client";
 
 /**
+ * URL del mapa base (CARTO Voyager raster).
+ *
+ * Desde 2025 CARTO exige una API key en sus teselas raster; sin ella dibuja
+ * la marca de agua "API KEY REQUIRED" sobre el mapa. La clave se lee de la
+ * variable de entorno `VITE_CARTO_KEY`, que se define en `web/.env.local`
+ * (ese archivo NO se versiona: ver `web/.gitignore`, patrón `*.local`).
+ *
+ * Si la variable no está definida, la app sigue funcionando: se usa la URL
+ * sin clave y aparece la marca de agua, pero el mapa carga igual.
+ */
+const CARTO_KEY = import.meta.env.VITE_CARTO_KEY as string | undefined;
+const URL_TILES =
+  "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png" +
+  (CARTO_KEY ? `?key=${CARTO_KEY}` : "");
+
+/**
  * Selección del área por DOS clics (sin leaflet-draw, que rompe con Leaflet
  * moderno). Primer clic fija una esquina; el movimiento del ratón dibuja la
  * previsualización; el segundo clic cierra el rectángulo y entrega el bbox.
@@ -94,8 +110,7 @@ export default function ScenarioMap({
       <span className="corner bl" /><span className="corner br" />
       <MapContainer center={[-0.2186, -78.5097]} zoom={13} zoomControl
         style={{ height: "100%", width: "100%" }} preferCanvas>
-        <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+        <TileLayer url={URL_TILES}
           attribution='&copy; OpenStreetMap &copy; CARTO' />
         {onBbox && <DrawRectangle active={!!drawing} bbox={bbox} onBbox={onBbox} />}
         <FitBounds bounds={bounds} />
