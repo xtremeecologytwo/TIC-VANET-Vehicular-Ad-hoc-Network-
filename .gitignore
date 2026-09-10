@@ -74,3 +74,6 @@ desktop.ini
 
 # Cache de descargas de Overpass (se regenera sola)
 .osm_cache/
+
+# Paquete de validacion OPL (se regenera con generar_paquete_opl.py)
+paquete_opl/

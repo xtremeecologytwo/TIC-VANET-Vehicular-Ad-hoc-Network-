@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import ScenarioMap from "./components/ScenarioMap";
 import ResultsTabs from "./components/ResultsTabs";
 import { api } from "./api/client";
-import type { BBox, LatLon, Rsu, ConnFrame } from "./api/client";
+import type { BBox, LatLon, Rsu, ConnFrame, OptResult } from "./api/client";
 import "./App.css";
 
 /* ---------- componentes de UI ---------- */
@@ -130,6 +130,9 @@ export default function App() {
   const [kpis, setKpis] = useState<Record<string, Kpi>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Aviso efimero de exito (p. ej. "paquete descargado"). Se distingue de
+  //  porque no es un fallo: informa de que algo salio bien.
+  const [nota, setNota] = useState<string | null>(null);
   const [activo, setActivo] = useState(1);
   // Animación de conectividad
   const [timesteps, setTimesteps] = useState<number[]>([]);
@@ -149,8 +152,35 @@ export default function App() {
   const [tope, setTope] = useState(60);
   // Multi-objetivo lexicográfico de CPLEX: cobertura primero, RSU después.
   const [lexOn, setLexOn] = useState(true);
+  // Motor del solver. "ambos" resuelve con docplex y con oplrun sobre los
+  // mismos datos y devuelve la comparacion: es la forma de DEMOSTRAR que
+  // las dos implementaciones del modelo coinciden.
+  const [motor, setMotor] = useState<"docplex" | "opl" | "ambos">("docplex");
+  const [comparacion, setComparacion] = useState<OptResult["comparacion"]>(null);
 
   const set = (k: keyof typeof DEF) => (v: number) => setP((s) => ({ ...s, [k]: v }));
+
+  /**
+   * Descarga el paquete de validación para entregar: proyecto OPL con los
+   * modelos, el .dat DEL ESCENARIO ACTUAL y el informe de comparación, listo
+   * para abrir en IBM CPLEX Optimization Studio.
+   */
+  const descargarPaquete = async () => {
+    setBusy("Armando el paquete de validación (resuelve con los dos motores)…");
+    setError(null);
+    try {
+      const { coincide, nombre } = await api.paqueteOpl(true);
+      setNota(coincide === true
+        ? `${nombre} descargado · los dos motores coinciden`
+        : coincide === false
+          ? `${nombre} descargado · OJO: los motores difieren, revisa comparacion.txt`
+          : `${nombre} descargado`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const run = useCallback(async (nombre: string, fn: () => Promise<void>) => {
     setBusy(nombre); setError(null);
@@ -223,7 +253,9 @@ export default function App() {
       max_rsu: maxRsuOn ? maxRsu : null,
       limite_tiempo: topeOn ? tope : null,
       lexicografico: lexOn,
+      motor,
     });
+    setComparacion(r.comparacion);
     setCandidatas(r.candidatas); setDesplegadas(r.desplegadas);
     const s = r.solver;
     const c = r.cobertura;
@@ -303,6 +335,7 @@ export default function App() {
       <Stepper activo={activo} />
 
       {error && <div className="banner err">⚠ {error}</div>}
+      {nota && <div className="banner ok">✓ {nota}</div>}
       {busy && <div className="banner busy">⏳ {busy}…</div>}
 
       {/* CONSOLA */}
@@ -414,6 +447,33 @@ export default function App() {
                 : "Sin límite: el modelo puede usar todas las RSU candidatas."}
             </p>
 
+            {/* Motor: sirve para DEMOSTRAR que las dos implementaciones del
+                mismo modelo dan lo mismo. "Ambos" resuelve con los dos sobre
+                los mismos datos y enseña la comparación. */}
+            <div className="grouplabel">Motor del solver</div>
+            <div className="presets">
+              {([
+                ["docplex", "docplex", "Python en memoria"],
+                ["opl", "OPL", "binario oplrun"],
+                ["ambos", "Ambos", "compara los dos"],
+              ] as const).map(([id, etq, pista]) => (
+                <button key={id} type="button" title={pista} disabled={!!busy}
+                  className={`preset${motor === id ? " on" : ""}`}
+                  onClick={() => setMotor(id)}>
+                  {etq}<em>{pista}</em>
+                </button>
+              ))}
+            </div>
+
+            {/* Empaqueta el escenario ACTUAL para que un tercero lo reproduzca
+                en su propio CPLEX. Solo tiene sentido tras optimizar: el .dat
+                lo escribe M3. */}
+            <button className="cta ghost" disabled={!!busy || !kpiEntries.length}
+              onClick={descargarPaquete}
+              title="Descarga un proyecto de IBM CPLEX Optimization Studio con los modelos, los datos de ESTE escenario y el informe docplex vs oplrun">
+              ⤓ Paquete de validación (OPL)
+            </button>
+
             <label className="chk">
               <input type="checkbox" checked={lexOn}
                 onChange={(e) => setLexOn(e.target.checked)} />
@@ -458,6 +518,50 @@ export default function App() {
               );
             })}
           </div>
+
+          {/* Validación cruzada: los mismos datos resueltos por dos
+              implementaciones independientes del mismo modelo. Que los
+              CONJUNTOS de RSU difieran no es un fallo —hay muchas soluciones
+              óptimas equivalentes—; lo que debe coincidir es el valor. */}
+          {comparacion && (
+            <div className="comparacion">
+              <div className={`veredicto ${comparacion.coincide ? "ok" : "mal"}`}>
+                {comparacion.coincide
+                  ? "Los dos motores coinciden en todas las magnitudes"
+                  : "Hay diferencias entre los motores"}
+              </div>
+              <table className="tabla-comp">
+                <thead>
+                  <tr><th>Magnitud</th><th>docplex</th><th>oplrun</th><th /></tr>
+                </thead>
+                <tbody>
+                  {comparacion.filas.map((f) => (
+                    <tr key={f.campo}>
+                      <td>{f.campo}</td>
+                      <td className="mono">{f.docplex?.toLocaleString("es") ?? "-"}</td>
+                      <td className="mono">{f.opl?.toLocaleString("es") ?? "-"}</td>
+                      <td className={f.ok ? "si" : "no"}>{f.ok ? "OK" : "difiere"}</td>
+                    </tr>
+                  ))}
+                  <tr className="sep">
+                    <td>tiempo</td>
+                    <td className="mono">{comparacion.segundos_docplex} s</td>
+                    <td className="mono">{comparacion.segundos_opl} s</td>
+                    <td />
+                  </tr>
+                </tbody>
+              </table>
+              <p className="hint">
+                RSU en común: {comparacion.rsu_comunes} de {comparacion.rsu_docplex}
+                {" / "}{comparacion.rsu_opl}.
+                {comparacion.rsu_comunes < comparacion.rsu_docplex &&
+                  " Que los conjuntos difieran es normal: hay muchas soluciones óptimas equivalentes y cada motor se queda con una. Lo que certifica el modelo es que ambos llegan al mismo valor."}
+              </p>
+              <p className="hint">
+                <span>docplex: {comparacion.status_docplex} · oplrun: {comparacion.status_opl}</span>
+              </p>
+            </div>
+          )}
         </>
       )}
 

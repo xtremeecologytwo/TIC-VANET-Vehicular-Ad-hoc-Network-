@@ -33,6 +33,24 @@ export interface OptResult {
   objetivos: number[] | null;
   /** true si se resolvió con prioridades en vez de con la suma ponderada. */
   lexicografico: boolean;
+  /** Qué motor resolvió: docplex, el binario oplrun, o los dos. */
+  motor: "docplex" | "opl" | "ambos";
+  /**
+   * Solo con motor "ambos": los dos resultados comparados campo a campo.
+   * `rsu_comunes` es informativo — los conjuntos pueden diferir sin que sea un
+   * error, porque hay muchas soluciones óptimas equivalentes.
+   */
+  comparacion: {
+    coincide: boolean;
+    filas: { campo: string; docplex: number | null; opl: number | null; ok: boolean }[];
+    rsu_comunes: number;
+    rsu_docplex: number;
+    rsu_opl: number;
+    segundos_docplex: number;
+    segundos_opl: number;
+    status_docplex: string;
+    status_opl: string;
+  } | null;
   n_desplegadas: number;
   status: string;
   /** Cómo quedó servida la demanda. Un "par" es un (instante, vehículo). */
@@ -107,9 +125,35 @@ export const api = {
     req<SimResult>("/api/simulate", { method: "POST", body: JSON.stringify(body) }),
   optimize: (body: {
     H: number; max_rsu: number | null; limite_tiempo: number | null;
-    lexicografico: boolean;
+    lexicografico: boolean; motor: "docplex" | "opl" | "ambos";
   }) =>
     req<OptResult>("/api/optimize", { method: "POST", body: JSON.stringify(body) }),
+  /**
+   * Arma el paquete de validación OPL del escenario actual y lo descarga.
+   * No usa `req<T>()` porque la respuesta es un .zip binario, no JSON.
+   * Devuelve el veredicto de la comparación, que viaja en una cabecera para
+   * no tener que abrir el zip.
+   */
+  paqueteOpl: async (comparar = true): Promise<{ coincide: boolean | null; nombre: string }> => {
+    const r = await fetch(`/api/opl/paquete?comparar=${comparar}`, { method: "POST" });
+    if (!r.ok) {
+      let detalle = `HTTP ${r.status}`;
+      try { detalle = (await r.json()).detail ?? detalle; } catch { /* respuesta no-JSON */ }
+      throw new Error(detalle);
+    }
+    const cd = r.headers.get("Content-Disposition") ?? "";
+    const nombre = /filename="([^"]+)"/.exec(cd)?.[1] ?? "paquete_opl.zip";
+    const blob = await r.blob();
+    // Descarga por enlace temporal: es la forma estándar de guardar un blob.
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = nombre;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    const cab = r.headers.get("X-Coincide");
+    return { coincide: cab === "True" ? true : cab === "False" ? false : null, nombre };
+  },
+
   timesteps: () => req<{ timesteps: number[] }>("/api/timesteps"),
   connectivity: (t: number) => req<ConnFrame>(`/api/connectivity?t=${t}`),
   tuplesV2i: (limit = 500) => req<{ total: number; tuplas: V2iTuple[] }>(`/api/tuples/v2i?limit=${limit}`),

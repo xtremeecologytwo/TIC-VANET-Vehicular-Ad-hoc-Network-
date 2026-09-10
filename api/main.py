@@ -17,9 +17,15 @@ escenario.
 
 import os
 import sys
+from typing import Literal
+
+import io
+import zipfile
+from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 # La raíz del repo debe estar en el path para importar backend/ y optimizacion/
@@ -30,6 +36,12 @@ OUTPUT_DIR = os.path.join(RAIZ, "output")
 
 from backend.descargar_osm import descargar_mapa_osm
 from backend.procesos import cancelar_todo
+# Motor alternativo: el binario `oplrun` de IBM CPLEX Optimization Studio.
+# Sirve para VALIDACION CRUZADA: dos implementaciones independientes del
+# mismo modelo deben dar el mismo resultado (ver optimizacion/VALIDACION_OPL.md).
+sys.path.insert(0, os.path.join(RAIZ, 'optimizacion'))
+import resolver_opl
+from generar_paquete_opl import construir_paquete
 from backend.sumo_pipeline import ejecutar_pipeline_sumo
 from backend.parsear_xml import (
     parsear_junctions, parsear_edificios, obtener_proyeccion,
@@ -61,6 +73,9 @@ STATE: dict = {
     "matrices_v2v": None,
     "tuplas_v2v": None,
     "params": {},
+    # Que se resolvio la ultima vez en M3 (parametros + resultado). Alimenta
+    # el LEEME del paquete de validacion.
+    "ultima_opt": None,
 }
 
 
@@ -204,6 +219,13 @@ class SimReq(BaseModel):
 
 class OptReq(BaseModel):
     H: int = Field(3, ge=1, le=6)
+    # Con que resolver:
+    #   "docplex" -> modelo construido en memoria desde Python (por defecto)
+    #   "opl"     -> el binario `oplrun` sobre rsu_model_lex.mod
+    #   "ambos"   -> los dos, y se devuelve la comparacion campo a campo
+    # "ambos" existe para poder DEMOSTRAR la equivalencia en una sola
+    # pulsacion, sin tener que fiarse de dos corridas separadas.
+    motor: Literal["docplex", "opl", "ambos"] = "docplex"
     # MaxR del modelo: nº máximo de RSU que se pueden desplegar. `null` (por
     # defecto) = sin límite efectivo; `exportar_dat` lo fija al nº de RSU
     # candidatas, con lo que la restricción existe pero nunca ata.
@@ -466,10 +488,24 @@ def optimize(req: OptReq):
             datos = exportar_dat_desde_memoria(
                 STATE["matrices_v2v"], STATE["tuplas_v2i"], STATE["rsus"], dat,
                 H=req.H, max_rsu=req.max_rsu, solo_rsu_conectados=True)
-        with cron.subetapa("Solver CPLEX (branch & bound)") as medida:
-            res = optimizar(datos, mostrar_log=False,
-                            limite_tiempo=req.limite_tiempo,
-                            lexicografico=req.lexicografico)
+        res_docplex = res_opl = None
+        with cron.subetapa(f"Solver CPLEX ({req.motor})") as medida:
+            if req.motor in ("docplex", "ambos"):
+                res_docplex = optimizar(datos, mostrar_log=False,
+                                        limite_tiempo=req.limite_tiempo,
+                                        lexicografico=req.lexicografico)
+            if req.motor in ("opl", "ambos"):
+                # oplrun lee el .dat que se acaba de escribir, asi que los dos
+                # motores reciben EXACTAMENTE los mismos datos.
+                modelo = (resolver_opl.MODELO_LEX if req.lexicografico
+                          else resolver_opl.MODELO_SUMA)
+                try:
+                    res_opl = resolver_opl.resolver(
+                        dat, modelo=modelo, limite_tiempo=req.limite_tiempo)
+                except FileNotFoundError as e:
+                    raise HTTPException(503, str(e))
+        # El motor "principal" es el que alimenta el mapa y los KPIs.
+        res = res_docplex if res_docplex is not None else res_opl
         # Tiempo del MOTOR (sin el armado del modelo): es el que hay que
         # comparar contra el límite. Si docplex no lo diera, cae al reloj.
         seg_motor = res.get("segundos_solver")
@@ -480,6 +516,14 @@ def optimize(req: OptReq):
         info = _interpretar_status(res["status"], seg_motor, req.limite_tiempo)
         cron.nota(f"status: {res['status']} -> {info['etiqueta']}; "
                   f"motor {seg_motor:.2f} s de un tope de {etiqueta_lim}")
+
+        # oplrun devuelve los ids ENTEROS del .dat; docplex ya trae los del
+        # backend. Se traduce con el mapa inverso que guarda exportar_dat, o el
+        # mapa se quedaria sin antenas que pintar al usar el motor OPL.
+        if res is res_opl and res is not None:
+            int_a_rsu = datos.get("mapas", {}).get("int_a_rsu", {})
+            res["seleccionados_backend"] = [int_a_rsu.get(r, r)
+                                            for r in res["seleccionados"]]
 
         desplegadas = []
         if res["objetivo"] is not None:
@@ -509,12 +553,169 @@ def optimize(req: OptReq):
                 "limite_tiempo": req.limite_tiempo,
                 **info,
             },
+            "motor": req.motor,
+            "comparacion": _comparar_motores(res_docplex, res_opl),
             "desplegadas": desplegadas,
             "candidatas": _rsus_geojson(STATE["rsus"]),
         }
+    # Se recuerda CON QUE se resolvio y QUE salio. El paquete de validacion lo
+    # usa para que el LEEME diga que escenario lleva y que resultado debe
+    # reproducir: sin eso seria un .dat anonimo.
+    STATE["ultima_opt"] = {
+        "H": req.H,
+        "max_rsu": req.max_rsu,
+        "lexicografico": req.lexicografico,
+        "motor": req.motor,
+        "n_desplegadas": res["n_rsu_elegidos"],
+        "objetivo": res["objetivo"],
+        "objetivos": res.get("objetivos"),
+        "cobertura": rep,
+        "status": res["status"],
+    }
+
     # Fin del flujo M1→M3: imprime la tabla con la suma de todas las etapas.
     cron.resumen()
     return respuesta
+
+
+@app.post("/api/opl/paquete")
+def opl_paquete(comparar: bool = True):
+    """
+    Arma el paquete de validación OPL **del escenario que se está probando
+    ahora** y lo devuelve como .zip para entregar.
+
+    El `.dat` que incluye es el mismo que escribió la última optimización
+    (`optimizacion/rsu_backend.dat`), así que lo que reciba quien lo abra
+    reproduce exactamente los números que se ven en pantalla.
+
+    Parámetros:
+        comparar: si True (por defecto) ejecuta la comparación docplex vs oplrun
+            y mete el informe en el paquete. Resolver dos veces cuesta; con
+            `?comparar=false` se salta y va mucho más rápido.
+    """
+    dat = os.path.join(RAIZ, "optimizacion", "rsu_backend.dat")
+    if not os.path.exists(dat):
+        raise HTTPException(409, "Optimiza primero: el paquete necesita el "
+                                 "escenario resuelto (rsu_backend.dat).")
+
+    # Metadatos del escenario, para que el LEEME diga QUÉ se está reproduciendo
+    # y no sea un .dat anónimo.
+    p = STATE.get("params") or {}
+    u = STATE.get("ultima_opt") or {}
+
+    def _v(x, sufijo=""):
+        """Omite lo que no se sabe en vez de escribir '?' en el documento."""
+        return f"{x}{sufijo}" if x not in (None, "") else None
+
+    meta = {
+        "generado": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "vehículos": _v(p.get("num_vehiculos")),
+        "duración simulada": _v(p.get("tiempo_min"), " min"),
+        "muestreo": _v(p.get("step_min"), " min"),
+        "radio OBU": _v(p.get("radio_obu"), " m"),
+        "saltos máximos (H)": _v(u.get("H")),
+        "MaxR": ("sin límite" if u.get("max_rsu") is None and u
+                 else _v(u.get("max_rsu"))),
+        "RSU candidatas": _v(len(STATE["rsus"]) if STATE.get("rsus") else None),
+        "tamaño del .dat": f"{os.path.getsize(dat) / 1024:.0f} KB",
+    }
+    # Lo más útil para quien lo reciba: contra qué comparar.
+    if u.get("n_desplegadas") is not None:
+        meta["--- resultado que debe reproducir ---"] = ""
+        meta["RSU desplegadas"] = u["n_desplegadas"]
+        if u.get("objetivos"):
+            d, i, t = u["objetivos"]
+            meta["objetivos (desconexión · instalación · tráfico)"] = \
+                f"{d:g} · {i:g} · {t:g}"
+        meta["objetivo (Ec. 1)"] = _v(u.get("objetivo"))
+        c = u.get("cobertura") or {}
+        if c:
+            meta["cobertura"] = f"{c.get('cobertura_pct', 0):.2f} %"
+            meta["desconectados"] = f"{c.get('desconectados', 0):.0f}"
+        meta["estado del solver"] = u.get("status")
+    meta = {k: v for k, v in meta.items() if v is not None}
+
+    with cron.etapa("Paquete de validacion OPL"):
+        destino = os.path.join(RAIZ, "paquete_opl")
+        res = construir_paquete(destino, dat, comparar=comparar, meta=meta)
+        if res["coincide"] is not None:
+            cron.nota("docplex vs oplrun: "
+                      + ("COINCIDEN" if res["coincide"] else "DIFIEREN"))
+
+        # Se comprime en memoria: no hace falta dejar un .zip suelto en el disco.
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for nombre, _ in res["archivos"]:
+                z.write(os.path.join(destino, nombre), nombre)
+        buf.seek(0)
+
+    marca = datetime.now().strftime("%Y%m%d_%H%M")
+    return StreamingResponse(
+        buf, media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="paquete_opl_{marca}.zip"',
+            # Cabecera propia para que el frontend pueda avisar del veredicto sin
+            # tener que abrir el zip.
+            "X-Coincide": str(res["coincide"]),
+        },
+    )
+
+
+def _comparar_motores(a: dict | None, b: dict | None) -> dict | None:
+    """
+    Compara los resultados de docplex (a) y oplrun (b), campo a campo.
+
+    Devuelve None si no se corrieron los dos: la comparacion solo tiene sentido
+    con ambos resultados sobre los mismos datos.
+
+    El CONJUNTO de RSU elegidas NO se exige igual, y que difiera no es un fallo:
+    hay muchas soluciones optimas equivalentes -candidatas casi intercambiables-
+    y cada motor puede quedarse con una. Lo que debe coincidir es el VALOR. Se
+    informa `rsu_comunes` como dato, no como criterio.
+    """
+    if a is None or b is None:
+        return None
+    if a.get("reparto") is None or b.get("reparto") is None:
+        return {"coincide": False, "motivo": "algun motor no devolvio solucion"}
+
+    ra, rb = a["reparto"], b["reparto"]
+    oa = a.get("objetivos") or [None, None, None]
+    ob = b.get("objetivos") or [None, None, None]
+
+    def igual(x, y, tol=1e-6):
+        if x is None and y is None:
+            return True
+        if x is None or y is None:
+            return False
+        return abs(x - y) <= max(tol, tol * max(abs(x), abs(y)))
+
+    campos = [
+        ("obj 1 · desconexion", oa[0], ob[0]),
+        ("obj 2 · instalacion", oa[1], ob[1]),
+        ("obj 3 · trafico", oa[2], ob[2]),
+        ("objetivo (Ec. 1)", a["objetivo"], b["objetivo"]),
+        ("RSU desplegadas", float(a["n_rsu_elegidos"]), float(b["n_rsu_elegidos"])),
+        ("desconectados", ra["desconectados"], rb["desconectados"]),
+        ("directos", ra["directos"], rb["directos"]),
+        ("multisalto", ra["multisalto"], rb["multisalto"]),
+        ("cobertura %", ra["cobertura_pct"], rb["cobertura_pct"]),
+    ]
+    filas = [{"campo": c, "docplex": x, "opl": y, "ok": igual(x, y)}
+             for c, x, y in campos]
+
+    sa = set(a["seleccionados"])
+    sb = set(b["seleccionados"])
+    return {
+        "coincide": all(f["ok"] for f in filas),
+        "filas": filas,
+        "rsu_comunes": len(sa & sb),
+        "rsu_docplex": len(sa),
+        "rsu_opl": len(sb),
+        "segundos_docplex": round(float(a.get("segundos_solver") or 0), 2),
+        "segundos_opl": round(float(b.get("segundos_solver") or 0), 2),
+        "status_docplex": a["status"],
+        "status_opl": b["status"],
+    }
 
 
 def _interpretar_status(status: str, segundos: float, limite: float | None) -> dict:

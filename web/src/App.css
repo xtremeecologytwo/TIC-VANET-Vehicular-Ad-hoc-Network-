@@ -200,3 +200,23 @@
 
 /* Leaflet: que los controles no tapen las esquinas del marco */
 .leaflet-top.leaflet-left { margin: 6px; }
+
+/* Comparacion de motores (docplex vs oplrun): validacion cruzada del modelo. */
+.comparacion { margin-top: 14px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 12px; background: var(--surface); }
+.veredicto { font-size: 12.5px; font-weight: 700; margin-bottom: 10px; padding: 7px 10px;
+  border-radius: var(--r-sm); }
+.veredicto.ok  { background: #e8f6ee; color: #0f7a45; border: 1px solid #b6e3ca; }
+.veredicto.mal { background: #fdecec; color: #a32020; border: 1px solid #f3c2c2; }
+.tabla-comp { width: 100%; border-collapse: collapse; font-size: 12px; }
+.tabla-comp th { text-align: left; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--muted); border-bottom: 1px solid var(--line);
+  padding: 5px 6px; }
+.tabla-comp td { padding: 5px 6px; border-bottom: 1px solid var(--line); }
+.tabla-comp td.mono { font-family: var(--font-mono); text-align: right; }
+.tabla-comp td.si { color: #0f7a45; font-weight: 700; }
+.tabla-comp td.no { color: #a32020; font-weight: 700; }
+.tabla-comp tr.sep td { border-top: 2px solid var(--line); color: var(--muted); }
+
+/* Aviso de exito: no es un error, informa de que algo salio bien. */
+.banner.ok { background: #e8f6ee; color: #0f7a45; border: 1px solid #b6e3ca; }
