@@ -1,0 +1,21 @@
+# ============================================================================
+# Piloto: 6 puntos para medir cuánto tarda cada corrida ANTES de lanzar las 108
+# ============================================================================
+# Cubre los extremos que deciden el tiempo: la demanda menor y la máxima (5000),
+# y el radio mayor (3 Mb/s r80 = 275 m, el CVR más grande) y el menor.
+#   python scn.py campana campanas/piloto.yaml
+# ============================================================================
+
+nombre: piloto
+descripcion: Piloto de tiempos para dimensionar fisica_v1.
+area: piloto
+semilla: 42
+duracion_min: 60
+muestreo_min: 5
+tope_m3_s: 5400
+
+factores:
+  vehiculos: [1000, 5000]
+  fisica: ["3:r80", "6:r90", "12:r90"]
+  H: [3]
+  filtrado: [C]

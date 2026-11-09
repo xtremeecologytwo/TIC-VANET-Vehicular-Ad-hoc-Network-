@@ -60,10 +60,15 @@ TIC-VANET/
 │   ├── .env.example         #    plantilla: copiar a .env.local y poner VITE_CARTO_KEY
 │   │   └── components/
 │   │       ├── ScenarioMap.tsx  # mapa (react-leaflet): dibujo del área + capas
-│   │       └── ResultsTabs.tsx  # tablas de tuplas, matrices A/B, multisalto
+│   │       ├── ResultsTabs.tsx  # tablas de tuplas, matrices A/B, multisalto
+│   │       └── CapaFisica.tsx   # panel 802.11p: curva de recepción, r80/r90, Γ_H, α·C₀
 │   └── README.md            #    detalle del frontend
 │
 ├── backend/                 # ⚙️ Lógica VANET (Python puro, sin dependencia de UI)
+│   ├── flujo.py             #    el flujo M1→M2 como funciones puras (lo usan la API y el CLI)
+│   ├── catalogo.py          #    registro SQLite de corridas + manifest.json de cada carpeta
+│   ├── almacen.py           #    reutilización de etapas ya calculadas (datos/cache/)
+│   ├── capa_fisica.py       #    radio, Γ_H y capacidad de 802.11p desde las notas del tutor
 │   ├── descargar_osm.py     #    descarga el área desde OpenStreetMap
 │   ├── procesos.py          #    registro de subprocesos, para poder cancelarlos
 │   ├── sumo_pipeline.py     #    netconvert → polyconvert → randomTrips
@@ -78,6 +83,12 @@ TIC-VANET/
 │   ├── rsu_model.mod        #    modelo OPL de referencia (misma matemática)
 │   └── rsu_micro.dat        #    micro-ejemplo de validación (rsu_backend.dat es generado)
 │
+├── scn.py                   # 🧪 CLI de campañas: corridas por lotes con semilla y catálogo
+├── consultas.sql            #    consultas listas para DB Browser sobre datos/catalogo.sqlite
+├── pruebas/determinismo.py  #    prueba de reproducibilidad (misma semilla → mismo escenario)
+├── pruebas/capa_fisica.py   #    C₀/C₁ contra las tablas del tutor + su ejemplo de radios y Γ
+├── Luis Urquiza/            # 📡 material del tutor: channel_functions.py, run_experiments.py, notas PDF
+├── herramientas/            # 🔧 osmconvert / osmfilter (binarios, no versionados; ver su README)
 ├── requirements.txt         # 📦 dependencias Python (backend + API)
 └── mini_proyecto_vanet.py   # 📚 demo didáctica del flujo completo (backend)
     ejemplo_multisalto.py    #    (scripts educativos, independientes de la app)
@@ -88,7 +99,11 @@ TIC-VANET/
 
 | Carpeta | Qué es | Por qué no sube |
 |---|---|---|
-| `output/` | Artefactos de una corrida (OSM, red SUMO, FCD, JSON de tuplas) | Se **regenera** con "Generar escenario". Pesaba 137 MB, con dos archivos de ~50 MB |
+| `datos/` | **Todas las corridas** (`corridas/`), el catálogo (`catalogo.sqlite`) y el almacén de etapas (`cache/`) — ver [Campañas, catálogo y almacén](#campanas) | Se **regenera** desde la semilla. Una corrida de ciudad deja cientos de MB |
+| `.osm_cache/` | Mapas ya recortados o descargados, por bbox | Ídem; con 11 áreas ocupaba 822 MB |
+| `datos/osm/` | El extracto de Ecuador de Geofabrik (125 MB) y su `.meta.json` | Se baja con `scn.py extracto` — ver [Mapas sin red](#extracto) |
+| `herramientas/*.exe` | `osmconvert` y `osmfilter` | Binarios de terceros; `herramientas/README.md` dice de dónde |
+| `output/` | Carpeta única de la web en versiones anteriores | Solo se lee si existe; la web guarda ahora en `datos/corridas/` |
 | `web/node_modules/` | Dependencias del frontend | Se reinstalan con `npm install` desde `package-lock.json` |
 | `explicaciones/` | Documentos de estudio (PDF + LaTeX) | Documentación de trabajo, no es el programa |
 | `Jornadas SmartCityNet/` | Artículo científico y sus figuras | Ídem |
@@ -116,7 +131,7 @@ cd web && npm install && cd ..         # dependencias del frontend
 **Cada vez que quieras usar la app** — abre **dos terminales**:
 ```bash
 # Terminal 1 — backend (API en http://localhost:8000)
-uvicorn api.main:app --reload --port 8000
+uvicorn api.main:app --reload --port 8000 --timeout-graceful-shutdown 5
 
 # Terminal 2 — frontend (app en http://localhost:5173)
 cd web
@@ -185,9 +200,11 @@ mapa.
 | `POST /api/simulate` | **M2**: FCD + LoS + tuplas V2I/V2V + matrices | `ejecutar_simulacion_sumo`, `parsear_fcd`, `generar_tuplas_visibilidad`, `generar_tuplas_v2v` |
 | `GET /api/timesteps` | Instantes disponibles para la animación | — |
 | `GET /api/connectivity?t=` | Vehículos + enlaces V2I/V2V de un instante | `convertir_xy_a_lonlat` |
-| `POST /api/optimize` | **M3**: construye CVR y resuelve (`H`, `max_rsu`, `limite_tiempo`, `lexicografico`) | `exportar_dat_desde_memoria`, `optimizar` |
+| `POST /api/optimize` | **M3**: construye CVR, resuelve (`H`, `max_rsu`, `limite_tiempo`, `lexicografico`) y **registra la corrida en el catálogo**; responde su `corrida` (uuid) y `carpeta` | `exportar_dat_desde_memoria`, `optimizar`, `registrar_corrida_completa` |
 | `GET /api/tuples/v2i` · `/v2v` | Tuplas de conectividad (paginadas) | — |
 | `GET /api/multihop?t=&H=` | A, B, R_h, S_h, D_H, d y resumen de un instante | `analizar_timestep` |
+| `GET /api/fisica/opciones` | Tasas PHY, tamaños, criterios, α recomendados y si están los CSV del tutor | `capa_fisica.opciones` |
+| `GET /api/fisica/resumen?rate=&packet_bytes=&escenario=&criterio=&alfa=&carga_kbps=&semilla=&n=` | Curva de recepción, r80/r90, Γ_H, C₀ y los parámetros ya traducidos para M2/M3 — ver [Capa física](#fisica) | `capa_fisica.resumen` |
 
 **Convención de coordenadas.** SUMO trabaja en **metros** (x, y). La API las
 convierte a **lat/lon** con `convertir_xy_a_lonlat`, que usa la **proyección real
@@ -445,6 +462,82 @@ la cuenta de los que están vivos:
 > Python que lanza `duarouter.exe` como hijo; matar solo al padre dejaba a
 > `duarouter` huérfano consumiendo **5 GB**. Por eso se usa `taskkill /F /T`.
 
+<a id="extracto"></a>
+
+### 🗺️ Mapas sin red: el extracto local (y por qué Overpass es el respaldo)
+
+Hasta ahora el mapa de cada área **venía de Overpass**, un servicio público y
+gratuito que ejecuta consultas sobre la base de datos mundial de OSM. Toda la
+maquinaria de abajo —carrera entre espejos, rondas, troceo, caché— existe para
+sobrevivir a un servicio que se satura. El 25 de septiembre de 2026 se cayó del
+todo: los cuatro espejos devolvieron `504` durante horas **hasta para una
+manzana**, y un M1 se quedó dos horas reintentando. Además OSM cambia a diario,
+así que el mapa de hoy no es el de hace tres meses: para una tesis, eso es un
+problema de reproducibilidad.
+
+**Ahora el orden es: caché → extracto local → Overpass.**
+
+| Fuente | Cuándo | Coste |
+|---|---|---|
+| `.osm_cache/` | el mismo bbox ya se pidió | 0 s |
+| **extracto local** (`datos/osm/*.osm.pbf`) | el bbox cae dentro de un extracto registrado | **~2 s** para un km², sin red |
+| Overpass | no hay extracto que cubra el área (otro país) | 30–150 s si va bien; nada si está caído |
+
+El extracto es el país entero tal como lo publica [Geofabrik](https://download.geofabrik.de/south-america/ecuador.html)
+cada día (Ecuador: **125 MB**), descargado **una vez** y congelado con su fecha:
+
+```powershell
+.\.venv\Scripts\python.exe scn.py extracto            # baja Ecuador, comprueba el MD5, registra bbox y fecha
+.\.venv\Scripts\python.exe scn.py extracto --listar   # qué extractos hay
+.\.venv\Scripts\python.exe scn.py extracto --url https://download.geofabrik.de/south-america/colombia-latest.osm.pbf
+```
+
+Necesita dos binarios en `herramientas/` (ver [`herramientas/README.md`](herramientas/README.md)):
+`osmconvert` recorta el rectángulo y `osmfilter` se queda con lo mismo que se
+pedía a Overpass (`highway`, `building`, `type=restriction`). Cada corrida anota
+en su `manifest.json` de dónde salió el mapa (`origen_osm`: archivo, **fecha
+de los datos**, URL, MD5), que es lo que se cita.
+
+**Dos detalles que conviene saber:**
+
+* `--complete-ways` de osmconvert —la opción que devuelve enteras las vías que
+  cruzan el borde— **no funciona en la build de Windows** (salida vacía con
+  `.pbf` y con `.o5m`). Se compensa recortando con un **margen** de 0,003°
+  (~330 m, `OSM_MARGEN_GRADOS`) y **podando después en `netconvert`** al
+  rectángulo pedido con `--keep-edges.in-geo-boundary`, que conserva enteras
+  las aristas que lo tocan: la misma semántica que la consulta bbox de
+  Overpass. `polyconvert` poda los edificios al mismo rectángulo
+  (`--prune.boundary`, en coordenadas de la red). Medido en el área de prueba:
+  sin poda 557 junctions y 893 edificios; **con poda 251 junctions y 281
+  edificios**, frente a **258 y 281** de Overpass con datos de una semana
+  antes. La poda solo se aplica
+  a mapas del extracto, para no alterar las corridas basadas en Overpass ni la
+  reproducción del artículo.
+* Desde la web, dibujar a mano el mismo rectángulo nunca coincide al
+  micrómetro con la caché: con el extracto ya no importa, porque recortar es
+  casi gratis.
+
+### ⏹️ Ctrl+C para la API de verdad
+
+Los endpoints son síncronos y corren en hilos de anyio, que **no son daemon**.
+Al recibir Ctrl+C, uvicorn deja de aceptar conexiones y espera a que terminen
+las peticiones en curso; si una está bloqueada en una descarga o en
+`netconvert`, el hilo no vuelve y el proceso se queda vivo con *"Waiting for
+background tasks"* —visto en consola, más de una vez, y una de ellas durante dos
+horas—.
+
+Ahora, al arrancar, la API envuelve los manejadores de señal de uvicorn
+(`api/main.py: _ctrl_c_que_pare`): antes de cederle la señal **mata los
+subprocesos registrados** (`procesos.cancelar_todo`) y **aborta las descargas**
+(`descargar_osm.abortar`, un contador de generación que cada espera de la
+descarga comprueba cada segundo). Las peticiones bloqueadas fallan en ~1 s y el
+cierre termina. Medido con una petición colgada en Overpass: **uvicorn terminó
+en 0,5 s**. Lo mismo hace *Generar escenario*: un escenario nuevo corta la
+descarga y los subprocesos del anterior.
+
+`--timeout-graceful-shutdown 5` en la línea de arranque (ya en `dev.ps1`) es
+la red de seguridad: si algo se resiste, uvicorn cancela a los 5 s.
+
 ### 📁 `backend/descargar_osm.py`
 
 Este módulo gestiona la comunicación con la API REST de OpenStreetMap para descargar los datos geográficos crudos.
@@ -499,6 +592,9 @@ calles y 37 s los edificios, 151 s en serie**; en paralelo el coste es el de la
 más lenta. No se paraleliza más porque Overpass admite dos peticiones
 simultáneas por IP y pasarse provoca `429`.
 
+**2 pre. Antes de todo esto, mira si hay un extracto local** (ver
+[Mapas sin red](#extracto)): si lo hay, recorta de él y no toca Overpass.
+
 **2 bis. Cachea lo descargado, indexado por bbox.** Overpass era el **74 % del
 tiempo de M1** y devuelve lo mismo cada vez para un área dada. Repetir el mismo
 escenario cambiando vehículos o duración —lo que se hace constantemente al
@@ -549,6 +645,13 @@ Las dos cosas juntas, sobre la misma área del centro de Quito:
 
 Y el peor caso —cuando de verdad no hay nada que hacer— baja de **60,7 minutos**
 colgado (4 servidores × 300 s × 3 rondas) a **12,7**.
+
+Además, toda descarga tiene un **presupuesto total** (`OVERPASS_PRESUPUESTO_S`,
+15 min): al agotarse paran las rondas y el troceo de edificios, que antes
+podía multiplicar los reintentos (4 → 16 → 64 cuadrantes) durante horas con los
+servidores caídos. Y **cada intento se escribe en la consola** del backend
+(`[overpass] mail.ru: 504 (45 s)`, `ronda 2/3 en 20 s`…): antes esperaba en
+silencio y la interfaz solo mostraba el reloj de arena.
 
 > **Lo que NO funciona: trocear el área.** Se probó, porque parece lo natural, y
 > los datos lo desmienten: el coste de Overpass es **por petición, no por
@@ -664,7 +767,7 @@ polyconvert --net-file output/mapa.net.xml --osm-files output/map.osm \
 
 ```bash
 python randomTrips.py -n output/mapa.net.xml -r output/mapa.rou.xml \
-    -e <end_time> -p <periodo_s> \
+    -e <end_time> -p <periodo_s> --seed <semilla> \
     --duarouter-routing-threads <N> --duarouter-routing-algorithm CH \
     --no-validate
 ```
@@ -673,8 +776,60 @@ python randomTrips.py -n output/mapa.net.xml -r output/mapa.rou.xml \
 - `-r`: Archivo de rutas de salida
 - `-e <end_time>`: Tiempo final de generación de vehículos. Se calcula como `end_time = num_vehiculos × periodo_salida` (en segundos), que equivale a la duración total
 - `-p <periodo_s>`: Periodo de salida en **segundos** entre vehículos
+- `--seed <semilla>`: **semilla del generador aleatorio** — ver [Reproducibilidad](#semilla)
 - Se ejecuta con `sys.executable` para usar el mismo intérprete Python del entorno virtual
 - **Parámetros configurables (UI):** `num_vehiculos` (5–1 000 000, **default 100**) y `tiempo_simulacion` en **minutos** (1–240, **default 120 min** = 2 h). El `periodo_salida` ya **no se elige a mano**: se calcula automáticamente como `tiempo_simulacion / num_vehiculos` para repartir todos los autos a lo largo de la simulación (tráfico continuo)
+
+<a id="semilla"></a>
+
+**Reproducibilidad: la semilla.** `randomTrips` y `sumo` usan generadores
+pseudoaleatorios. Sin fijar la semilla, **dos corridas con los mismos parámetros
+producen escenarios distintos**: no se puede repetir un resultado, ni comparar
+dos configuraciones de filtrado sobre la misma movilidad, ni publicar un
+suplemento que otra persona pueda rehacer.
+
+La semilla se pasa **a las dos etapas** —`randomTrips --seed` y `sumo --seed`—
+porque cada una tiene su propio generador: la primera decide los pares
+origen-destino, la segunda las inserciones y el comportamiento de los
+conductores. Se resuelve **una sola vez por escenario** y queda guardada junto a
+sus parámetros.
+
+| Dónde | Valor |
+|---|---|
+| Petición de la API | `semilla` (`null` = usa la de por defecto) |
+| Constante | `SEMILLA_POR_DEFECTO` en `backend/sumo_pipeline.py` |
+| Variable de entorno | `SUMO_SEMILLA` |
+| Por defecto | **42** — la que usó la campaña del artículo V5 |
+
+**Comprobado, no supuesto.** `pruebas/determinismo.py` verifica las tres cosas
+que hacen falta, **con el paralelismo activado**:
+
+```
+  corrida                rutas              traza (FCD)
+  semilla 42 (a)         85cbbd5f63e1f923   f9e467149822ac87
+  semilla 42 (b)         85cbbd5f63e1f923   f9e467149822ac87
+  semilla 7              afa9fb9e0574e9f2   9ada370476ceb480
+  semilla 42, 1 hilo     85cbbd5f63e1f923   f9e467149822ac87
+
+  1. misma semilla -> mismo escenario   : True
+  2. otra semilla  -> otro escenario    : True
+  3. los hilos no alteran el resultado  : True
+```
+
+La tercera comprobación importa especialmente: el proyecto usa `duarouter` con
+varios hilos y **CH**. Queda verificado que **el paralelismo no introduce
+variación** entre corridas.
+
+> **No comparar los archivos byte a byte.** SUMO escribe en la cabecera la marca
+> de tiempo de generación y un bloque `<configuration>` con las **rutas** de los
+> archivos; ambas cambian entre dos corridas en carpetas distintas sin que el
+> escenario sea distinto. La prueba compara el **contenido** (los `<vehicle>` del
+> `.rou.xml` y los `<timestep>` del FCD), descartando esa cabecera.
+
+```bash
+python pruebas/determinismo.py                    # usa output/map.osm
+python pruebas/determinismo.py --osm otro.osm --vehiculos 500
+```
 
 <a id="paralelismo"></a>
 
@@ -770,12 +925,22 @@ se deja siempre, porque explora menos arcos también con un solo hilo.
 > **6,8 GB con 16** sobre esta red de 397 MB. En una máquina con poca RAM hay
 > que bajar `SUMO_HILOS`.
 
-La misma idea se aplica a **M2**: la simulación se lanza con `sumo --threads N`,
-que reparte el movimiento de los vehículos. Con pocos vehículos no compensa (el
-reparto cuesta más que el cálculo), pero con decenas de miles es donde se va el
-tiempo del módulo.
+**M2 no se paraleliza.** Se probó `sumo --threads N` y no reparte el bucle de
+la simulación: medido con 50 000 vehículos, el hilo principal consumió
+25 480 s de CPU y los 16 auxiliares **22 s cada uno**. Se quitó la opción. El
+tiempo de M2 con decenas de miles de vehículos es el de un núcleo, y la única
+palanca real es el tamaño del escenario (o pasar a la simulación mesoscópica
+de SUMO, `--mesosim`, que es una decisión de método).
 
-El número de hilos sale de `_hilos()` en
+> ⚠️ **Lo que sí mata a M2 es la memoria.** `sumo` con 50 000 vehículos sobre
+> la red de Quito llegó a **3,3 GB**. Con 0,9 GB libres —VS Code, navegador y
+> demás ocupaban 12 GB de 13,7— Windows lo paginó a disco y estuvo **8 horas
+> sin avanzar 600 s simulados** (working set de 7 MB, 100 % de CPU: pura
+> paginación). Por eso M2 **avisa antes de lanzar** cuánto necesita
+> (66 KB por vehículo, medido) y cuánto hay libre. No se recorta nada; si el
+> aviso sale, cierra programas o reduce los vehículos.
+
+El número de hilos de `duarouter` sale de `_hilos()` en
 [`sumo_pipeline.py`](backend/sumo_pipeline.py): usa **todos los núcleos** salvo
 que se fije `SUMO_HILOS`.
 
@@ -1885,6 +2050,7 @@ porque con una ciudad entera 300 s no alcanzan:
 
 ```powershell
 $env:SUMO_TIMEOUT_S = "3600"     # 1 h por herramienta de SUMO (0 = sin límite)
+$env:SUMO_SEMILLA = "42"         # semilla de randomTrips y sumo (reproducibilidad)
 $env:SUMO_HILOS = "16"           # hilos de duarouter y de la simulación (0 = todos)
 $env:SUMO_UMBRAL_HILOS = "700"   # por debajo de N viajes no se paraleliza (sale peor)
 $env:OVERPASS_TIMEOUT_S = "300"  # lo que se le concede al servidor de Overpass
@@ -1972,11 +2138,396 @@ se paralelizan.
 
 ### Dónde quedan los resultados
 
-El backend **persiste todo en `output/`** en cada paso: `junctions_limpias.json`,
+Cada **"Generar escenario"** crea su propia carpeta `datos/corridas/web_v{veh}_t{min}_s{semilla}_{fecha}/`
+y ahí van todos los archivos de esa sesión: `junctions_limpias.json`,
 `edificios_limpios.json`, `tuplas_visibilidad.json` (Matriz B / V2I), `tuplas_v2v.json`
-(Matriz A / V2V) y el dataset de optimización `optimizacion/rsu_backend.dat`. No hay
-que exportar nada a mano: son los mismos archivos que la API lee para rehidratar el
-escenario al reiniciar.
+(Matriz A / V2V), el `dataset.dat` de la optimización y un **`manifest.json`** que
+cada clic va completando (bbox, vehículos, semilla, filtrado, radio, métricas,
+despliegue). Al pulsar **Optimizar**, la corrida queda además **registrada en el
+catálogo** con los mismos campos que una del CLI —ver [Campañas, catálogo y
+almacén](#campanas)—. No hay que exportar nada a mano: son los mismos archivos
+que la API lee para rehidratar el escenario al reiniciar (el puntero está en
+`datos/web_ultima.txt`). Por compatibilidad, `optimizacion/rsu_backend.dat` se
+sigue actualizando con una copia del último `.dat`.
+
+---
+
+<a id="campanas"></a>
+
+## 🧪 Campañas por lotes: `scn.py`, el catálogo y el almacén de etapas
+
+La interfaz sirve para **una** corrida: se dibuja el área y se pulsan cuatro
+botones. Para el artículo hacen falta **decenas** —barridos de semilla, de
+demanda, de filtrado— y repetir clics no escala ni deja registro. De ahí tres
+piezas que trabajan juntas:
+
+| Pieza | Archivo | Qué resuelve |
+|---|---|---|
+| **CLI** | `scn.py` | Lanzar corridas desde la terminal, en bucle, con la semilla fijada |
+| **Catálogo** | `backend/catalogo.py` → `datos/catalogo.sqlite` | Saber **qué** se corrió, con **qué** parámetros y **qué** salió |
+| **Almacén de etapas** | `backend/almacen.py` → `datos/cache/` | No volver a calcular una etapa cuya salida ya existe |
+
+La web y el CLI son dos clientes del mismo núcleo (`backend/flujo.py`) y **guardan
+igual**: carpeta propia, `manifest.json`, fila en el catálogo. La diferencia es
+solo quién pulsa.
+
+### El CLI, en cuatro pasos
+
+```powershell
+# 1. Elegir el área en el navegador (una vez): dibujas el rectángulo y Guardar
+.\.venv\Scripts\python.exe scn.py mapa --nombre centro
+
+# 2. Ver qué haría la campaña (cuántas corridas, qué se reutiliza)
+.\.venv\Scripts\python.exe scn.py campana campanas\fisica_v1.yaml --plan
+
+# 3. Lanzarla (se puede cortar con Ctrl+C y volver a lanzar: continúa).
+#    Con varios YAML se ejecutan juntos, semilla a semilla (ver "Varias semillas")
+.\.venv\Scripts\python.exe scn.py campana campanas\fisica_v1.yaml
+
+# 4. Figuras + tabla LaTeX + CSV para Power BI / Excel; con `semillas` en el
+#    YAML, --semillas da la media y el intervalo de confianza de cada punto
+.\.venv\Scripts\python.exe scn.py reporte --campana fisica_v1 --semillas
+```
+
+| Orden | Qué hace |
+|---|---|
+| `mapa --nombre N` | abre una página local (Python, sin la API) con un mapa; el rectángulo se guarda en `datos/areas.json` con ese nombre. Pinta las áreas ya guardadas y la cobertura del extracto local |
+| `areas` | lista las áreas; `areas --agregar N --bbox=...` guarda una sin mapa |
+| `correr --area N ...` | una corrida suelta (ver opciones abajo) |
+| `campana A.yaml [B.yaml ...]` | uno o varios lotes factoriales (con varios, o con `semillas`, se ejecutan semilla a semilla); `--plan` (no ejecuta), `--semilla S` (solo esa semilla), `--solo K` (los K primeros pendientes de cada campaña y semilla), `--sin-m3`, `--detalle`, `--paralelo N\|auto` (varias optimizaciones a la vez, ver [En paralelo](#paralelo)) |
+| `listar` · `estado` | corridas registradas · resumen del catálogo y del almacén |
+| `exportar --campana N` | CSV con una fila por corrida (`datos/reportes/N/N.csv`) en formato de Excel en español: separador `;`, coma decimal, UTF-8 con BOM. En Power BI, importarlo con la configuración regional *Español*. Con `--semillas`, `N` es una familia: `N_semillas.csv` (todas las corridas) y `N_resumen.csv` (media, desviación e IC 95 % por punto) |
+| `reporte --campana N` | CSV + figuras (PDF vectorial + PNG) + tablas `.tex` en `datos/reportes/N/`; si la campaña tiene `carga` o `presupuesto`, también las de esos factores. Con `--semillas`, las mismas con la media de las semillas y barras de error, en `datos/reportes/N_semillas/` |
+| `powerbi [--campana A B] [--abrir]` | exporta los CSV y escribe un **proyecto de Power BI** listo (`datos/reportes/powerbi/SmartCityNet.pbip`): una tabla y una página por campaña, con segmentaciones y cuatro gráficos (RSU, cobertura, multisalto y uso de capacidad frente a la carga, el presupuesto o los vehículos), ya resumidos por promedio y con los colores de las figuras de la tesis. Al abrirlo: *Actualizar ahora*. Regenerarlo sobrescribe la carpeta: lo editado a mano, guárdalo con otro nombre |
+| `extracto` | descarga/registra el mapa de Ecuador para trabajar sin internet |
+
+Opciones de `correr`:
+
+| Opción | Qué es | Por defecto |
+|---|---|---|
+| `--area` o `--bbox=` | área guardada, o `min_lon,min_lat,max_lon,max_lat` (el `=` es obligatorio) | — |
+| `--vehiculos` · `--duracion` | demanda (**máximo 5 000**) y minutos simulados | 100 · 10 |
+| `--semilla` | fija `randomTrips` y `sumo`; misma semilla = mismo escenario | 42 |
+| `--gmin` · `--rho` | filtrado de candidatas: grado mínimo y radio de clúster (m) | 4 · 20 |
+| `--fisica` | `TASA:CRITERIO` (p. ej. `6:r90`): radio, $P[h]$ y Cap del modelo del tutor | — (usa `--radio`) |
+| `--radio` · `--paso` · `--H` | alcance OBU si no hay `--fisica` (m), muestreo (min), saltos | 300 · 2 · 3 |
+| `--optimizar` · `--tope-m3` | resolver M3 y guardar el despliegue · tope total en s | no · 5400 |
+| `--campana` · `--silencioso` · `--sin-cache` | etiqueta · menos salida · recalcular todo | — |
+
+### Las campañas (`campanas/*.yaml`)
+
+Una campaña es un **experimento factorial**: un área, una semilla y listas de
+niveles; se ejecuta el producto cartesiano. El archivo YAML se versiona con el
+código y **es la especificación del experimento** (además queda copiado en la
+tabla `campana` del catálogo). Ver [`campanas/fisica_v1.yaml`](campanas/fisica_v1.yaml):
+
+```yaml
+nombre: fisica_v1
+area: centro                      # la de `scn.py mapa --nombre centro`
+semillas: [42, 1, 2, 3, 4, 5, 6, 7, 8, 9]   # o `semilla: 42` para una sola
+duracion_min: 60
+muestreo_min: 5
+tope_m3_s: 5400                   # 1 h 30 por optimización
+factores:
+  vehiculos: [1000, 2500, 5000]
+  fisica: ["3:r80", "3:r90", "6:r80", "6:r90", "12:r80", "12:r90"]
+  H: [1, 2, 3]
+  filtrado: [C, A]                # del artículo V5
+```
+
+**Por qué el factor es la "física" y no el radio.** El alcance, el coste del
+salto y la capacidad no se eligen a mano: los fija la configuración de 802.11p a
+través del modelo del tutor ([Capa física](#fisica)). Cada nivel `TASA:CRITERIO`
+fija **juntos y coherentes** el radio ($r_{80}$/$r_{90}$ con interferente), $P[h] = \Gamma_h$
+y $\mathrm{Cap} = \alpha C_0$. `"clasica"` reproduce los valores de antes como línea base.
+
+| Nivel | 3:r80 | 3:r90 | 6:r80 | 6:r90 | 12:r80 | 12:r90 |
+|---|---|---|---|---|---|---|
+| Radio (1000 B, con interferente) | 275 m | 135 m | 200 m | 100 m | 95 m | 45 m |
+
+**Qué se reutiliza.** Con la semilla fija, M1 depende solo de la demanda y M2
+de la demanda, el filtrado y el radio. El orden de ejecución (vehículos →
+filtrado → física → $H$) y la última simulación en memoria hacen que en
+`fisica_v1` SUMO corra **3 veces** y la línea de vista **36**, para 108 puntos.
+
+**M3 tampoco se repite.** Cada despliegue guarda la huella de su problema
+(`despliegue.clave_m3`: el CVR con $P$, Cap, $L$, MaxR y los topes). Si otra
+corrida, de esta campaña o de otra, ya resolvió **exactamente** el mismo
+problema, se copia su resultado y `despliegue.origen` apunta al original (en la
+bitácora: *M3 idéntico ya resuelto*). Así la carga ×1 de `trafico_v1` y el
+presupuesto *libre* de `presupuesto_v1` se resuelven una sola vez.
+`SCN_CACHE=0` lo desactiva, igual que el almacén.
+
+<a id="semillas"></a>
+### Varias semillas
+
+Con una semilla, toda diferencia entre puntos se debe a los factores, pero no
+se sabe cuánto de cada resultado es azar del tráfico. Con `semillas: [...]` en
+vez de `semilla`, la campaña se repite con cada una: **otro tráfico** (rutas de
+`randomTrips.py` y azar de SUMO) sobre **la misma área y las mismas
+candidatas**. El área no se vuelve a elegir: es la guardada con `scn.py mapa`.
+
+- Cada semilla es una campaña aparte en el catálogo, `<nombre>_s<semilla>`
+  (`fisica_v1_s42`, `fisica_v1_s1`...), con su huella de configuración, su
+  carpeta y su reanudación; todas llevan `familia: <nombre>` en su spec. Las
+  campañas de una sola semilla que ya existían (p. ej. `fisica_v1`) no se tocan.
+- Con varios YAML en la misma orden, se ejecutan **semilla a semilla**: la 1.ª
+  semilla de todas, luego la 2.ª... Así, si se corta a los pocos días, quedan
+  semillas **completas** de cada campaña (y el reporte agregado ya sirve), y
+  dentro de cada semilla `trafico_v1` va antes que `presupuesto_v1`, que copia
+  de ella el M3 del nivel *libre*.
+- `scn.py reporte --campana <nombre> --semillas` junta las semillas que haya:
+  por punto, la media de cada métrica (las figuras de siempre), su desviación
+  (`_sd`, con n − 1), cuántas semillas entran (`_n`) y el semiancho del
+  intervalo de confianza del 95 % (`_ic95` = t(0,975; n − 1) · sd / √n, con la
+  t de Student de una tabla: con 10 semillas, 2,262). Las figuras dibujan el
+  IC como barras de error; el anillo rojo marca los puntos cortados en alguna
+  semilla; las semillas sin solución útil no entran en la media. Las tablas
+  `.tex` ponen *media ± IC*.
+
+```powershell
+# Las tres campañas de la tesis con 10 semillas (6 120 puntos; 42 + nueve nuevas)
+.\.venv\Scripts\python.exe scn.py campana campanas\fisica_v1.yaml campanas\trafico_v1.yaml campanas\presupuesto_v1.yaml --paralelo auto
+.\.venv\Scripts\python.exe scn.py reporte --campana trafico_v1 --semillas
+```
+
+**Cuánto tarda.** Medido con la semilla 42: `fisica_v1` unas 2 h 45 y
+`trafico_v1` unas 7 h 45 (con `--paralelo auto`); `presupuesto_v1` se estima en
+5-10 h (con MaxR el problema es más difícil). Unas 15-20 h por semilla y
+**6-8 días** para las nueve nuevas, sin parar. La semilla 42 sale casi gratis:
+SUMO y la línea de vista vienen del almacén, y el M3 de `trafico_v1` (y con él
+el *libre* de `presupuesto_v1`) se copia de la primera tanda. El de
+`fisica_v1` no: esa campaña es anterior a `clave_m3`, así que `fisica_v1_s42`
+vuelve a resolver sus 108 puntos (≈ 2,6 h de CPLEX), lo que de paso comprueba
+que el resultado se reproduce. `pruebas/semillas.py` verifica la validación, el
+desdoble por semilla, el orden y el cálculo de medias e intervalos.
+
+### Carga y presupuesto como factores
+
+Dos factores opcionales, que solo entran en la clave del punto si el YAML los
+usa (las claves de `fisica_v1` no cambian):
+
+| Factor | Qué varía | Ejemplo de clave |
+|---|---|---|
+| `carga: [1, 2, 3, 4]` | multiplica la carga por vehículo $L$ de `fisica_base` (80 → 160, 240, 320 kb/s): solo cambia la Ec. 4 | `v5000_C_6-r80_H3_x2` |
+| `presupuesto: [libre, alto, bajo]` | el número máximo de RSU (MaxR, Ec. 5); los niveles se definen en `presupuestos:` con un valor fijo o uno por demanda | `v5000_C_6-r80_H3_max60` |
+
+```yaml
+factores:
+  presupuesto: [libre, alto, bajo]
+presupuestos:
+  alto: {2500: 60, 5000: 80}     # MaxR según la demanda
+  bajo: {2500: 40, 5000: 60}
+reparto_tope: [1, 4, 1]          # sin MaxR: el nivel difícil es el 2
+reparto_tope_limitado: [4, 1, 1] # con MaxR: el difícil es el 1
+```
+
+**El reparto del tope cambia con MaxR.** Sin límite de RSU, el nivel 1
+(cobertura) es fácil —basta encender todo— y el 2 (mínimo de antenas) es el
+difícil. Con el número de RSU limitado es al revés: elegir *qué* k antenas dan
+más cobertura es el problema de máxima cobertura. Medido con 5 000 vehículos,
+6 Mb/s $r_{80}$, $H = 3$ y MaxR = 60: con 600 s para el nivel 1 terminó con
+óptimo (395 s); con 150 s quedó cortado. Por eso cada YAML puede fijar
+`reparto_tope` y `reparto_tope_limitado` (pesos de los tres niveles).
+
+Las dos campañas que los usan, con la misma semilla y área que `fisica_v1`
+(sus simulaciones salen del almacén):
+
+| Campaña | Pregunta | Diseño | Tope |
+|---|---|---|---|
+| [`trafico_v1`](campanas/trafico_v1.yaml) | ¿cuánta carga hace falta para que la capacidad obligue a desplegar más RSU? | 2 demandas (2500, 5000) × 6 físicas × 3 $H$ × 2 filtrados × 4 cargas = **288** | 3 h (30 min / 2 h / 30 min) |
+| [`presupuesto_v1`](campanas/presupuesto_v1.yaml) | ¿cuánta cobertura se pierde con menos RSU, y cuánto la compensa el multisalto? | 2 × 6 × 3 × 2 × 3 presupuestos = **216** | 3 h (2 h / 30 min / 30 min con MaxR) |
+
+Con 1 000 vehículos la capacidad no llega a limitar ni con ×4 (uso medio ≤ 3,6 %
+con ×1 en `fisica_v1`), por eso no entran.
+
+<a id="paralelo"></a>
+### En paralelo: todos los núcleos sin agotar la RAM
+
+```powershell
+.\.venv\Scripts\python.exe scn.py campana campanas\trafico_v1.yaml --paralelo auto
+```
+
+Con `--paralelo N` el proceso principal prepara los puntos uno a uno
+(simulación del almacén + CVR, segundos) y reparte las **optimizaciones** entre
+N procesos, cada uno con `núcleos / N` hilos de CPLEX. Varias optimizaciones con
+4 hilos rinden más que una con 16: el árbol de ramificación no escala bien con
+tantos hilos, y la parte secuencial de cada solve deja núcleos parados. En
+paralelo los puntos van **de más pesado a más ligero**, para que los largos no
+queden al final con el resto de núcleos sin trabajo.
+
+**La RAM manda.** Un M3 ocupa ≈ 0,3 GB + 1 GB por cada 100 000 tuplas del CVR
+(medido: 3,1 GB de pico con las 301 090 de `v5000_A_3-r80_H3`). Un punto solo
+se lanza si su estimación cabe en la RAM libre del arranque (menos 2,5 GB para
+el proceso principal y el sistema) y en la libre en ese momento; los pesados
+esperan turno. Además cada CPLEX tiene `workmem` = 1 GB y, al superarlo, guarda
+los nodos del árbol **comprimidos en disco** (`mip.strategy.file = 3`) en vez de
+crecer en RAM: así no se repite lo de la prueba de 50 000 vehículos, que se
+quedó 8 h paginando. `auto` usa un proceso por cada 4 núcleos lógicos, sin pasar
+de lo que cabe en la RAM libre: **cierra el navegador y lo que no uses antes de
+lanzar**. Sin `--paralelo` (o con 1), CPLEX usa todos los núcleos y casi toda la
+RAM libre como `workmem`.
+
+Solo el proceso principal escribe en el catálogo. Con Ctrl+C se cierran los
+procesos de CPLEX al momento, y los puntos que estaban en curso quedan
+*fallidos — interrumpida durante M3* y se repiten al relanzar (comprobado con
+dos M3 pesados en marcha).
+
+**Reanudar.** Cada punto tiene una clave (`v5000_C_6-r90_H3`); los que ya
+están hechos (con despliegue) se saltan. Un punto que falla se anota y la
+campaña sigue. Todo queda también en `datos/corridas/<campaña>/campana.log`.
+
+**Qué pasa cuando algo sale mal** (comprobado caso por caso):
+
+| Situación | Qué hace la campaña |
+|---|---|
+| **Ctrl+C mientras CPLEX resuelve** | CPLEX captura la señal y aborta el solve *sin* `KeyboardInterrupt`; se detecta (estado `stopped` antes de agotar los topes), la corrida queda *fallida — interrumpida*, la campaña se detiene y ese punto se repite al relanzar |
+| M3 sin solución (memoria, error de CPLEX) | corrida *fallida*, la campaña sigue con el siguiente; se reintenta al relanzar |
+| M3 cortado por tiempo | se guarda la mejor solución hallada, marcada como cortada (círculo rojo en las figuras, † en la tabla) |
+| Nivel 1 cortado sin cobertura | no es un despliegue (0 RSU, 0 %): se trata como fallo, no como resultado |
+| Editar el YAML a mitad de campaña (área, semilla, duración, muestreo, `fisica_base`, filtrados) | se **niega** a continuar: cada punto guarda una huella de esa configuración fija y mezclar dos configuraciones daría figuras engañosas. Para la configuración nueva, usar otro `nombre` |
+| `correr --campana X` sobre una campaña de YAML | se niega: descuadraría su reporte |
+| Clic dentro de la ventana de PowerShell (título "Seleccionar ...") | la consola de Windows entra en modo selección y congela el programa al escribir la siguiente línea, hasta pulsar **Esc** (los CPLEX en curso terminan y esperan). `campana` desactiva ese modo al arrancar; en una ventana lanzada antes: clic derecho en la barra de título > Propiedades > quitar *Modo de edición rápida* |
+| La laptop entra en espera (espera moderna) por inactividad | en esta laptop la espera llega al **apagarse la pantalla** (a los 5 min sin uso), aunque "Suspender" esté en *Nunca*: del 30-oct al 3-nov estuvo 67 h en espera y la última vez no despertó (pantalla negra, reinicio forzado). CPLEX siguió trabajando (mismos puntos cortados que la semilla 42), pero el riesgo es colgarse. Por eso `campana` pide a Windows mantener **la pantalla encendida** mientras corre (bajar el brillo); no pulsar el botón de encendido, que también la manda a espera |
+
+Antes de esto, los dos primeros casos se guardaban como un punto *hecho* con
+0 RSU y no se repetían nunca (hay una corrida web así en el catálogo:
+`417f66d32b5b`).
+
+**Límites de trabajo.** Máximo **5 000 vehículos** (por encima, M2/M3 colapsan
+en esta máquina). M3 con **tope de 1 h 30** por punto (indicación del tutor;
+`trafico_v1` y `presupuesto_v1` usan 3 h, porque en `fisica_v1` los dos puntos
+cortados quedaron lejos del óptimo): si no termina, se guarda la mejor solución
+hallada, marcada como cortada.
+
+> ⚠️ **El tope del lexicográfico es POR NIVEL.** Con un tope *global*, CPLEX
+> multi-objetivo que no termina devuelve **ninguna** solución
+> (`multi-objective stopped`): pasó en una corrida real de 5 000 vehículos
+> (`417f66d32b5b`: 1 589 s de solver y 0 RSU). Ahora el tope total se reparte
+> 15 / 60 / 15 min entre los niveles (`FRACCIONES_NIVEL` en `optimizar_rsu.py`):
+> el nivel 1 (cobertura) es fácil, el 2 (nº de RSU, un cubrimiento de
+> conjuntos) es el difícil, y el 3 trabaja con las antenas ya acotadas. Al
+> agotarse un nivel, CPLEX sigue con lo mejor que tenía y al final devuelve
+> `multi-objective non-optimal`. Medido en una instancia de 110 k tuplas con
+> tope de 12 s: misma cobertura y mismas antenas que el óptimo, saltos algo
+> peores. La web usa el mismo reparto.
+
+### El análisis: figuras en Python, CSV para explorar
+
+`scn.py reporte` genera desde el catálogo, con un comando, todas las figuras;
+cada una responde una pregunta: RSU y cobertura frente a la física (por demanda
+y $H$), valor del multisalto frente a $H$ y frente a la demanda, filtrado C
+frente a A (la pregunta del revisor), tiempo del solver frente a
+$|\mathrm{CVR}|$, mapa de calor de RSU y `tabla_resumen.tex`. Con el factor
+`carga`: RSU, cobertura, uso medio de la capacidad y multisalto frente a la
+carga (`tabla_carga.tex`); con `presupuesto`: la curva cobertura–RSU, el
+multisalto frente al presupuesto y cuánto compensa $H$ la falta de antenas
+(`tabla_presupuesto.tex`). En esas campañas, las figuras de siempre usan el
+nivel base (carga ×1, presupuesto libre). El uso medio de la capacidad sale del
+nivel 3 del lexicográfico: $\sum R_{ts} P[h] L$ es justo la carga que reciben
+las RSU encendidas en todos los instantes (el lado izquierdo de la Ec. 4). Se generan en Python —y no en Power BI— porque así son
+**reproducibles** (se regeneran al cambiar los datos), salen en PDF vectorial
+para LaTeX y el script va en git. Para explorar a mano, el CSV de
+`scn.py exportar` abre con doble clic en Excel en español y en Power BI
+(configuración regional *Español*). Solo entran en las figuras los puntos que
+define el YAML de la campaña, y `reporte` avisa si detecta mezcla de áreas,
+semillas o configuraciones. Con `--semillas`, las figuras son las mismas con la
+media de las semillas y barras del IC 95 % ([Varias semillas](#semillas)), y
+avisa si no todos los puntos tienen las mismas semillas.
+
+### El catálogo (`datos/catalogo.sqlite`)
+
+**Principio: el disco es la verdad; la base de datos es un índice.** Los
+artefactos pesados viven en las carpetas; el catálogo guarda rutas, hashes,
+parámetros y métricas, y se puede borrar y reconstruir desde los `manifest.json`.
+
+Es SQLite porque viene con Python (nada que instalar), el acceso es de un solo
+proceso y el volumen es una fila por corrida. El SQL es estándar a propósito:
+migrar a PostgreSQL —si algún día escriben varias máquinas— sería cambiar la
+conexión. Está en modo WAL, así que se puede **leer mientras una campaña escribe**.
+
+Las tablas siguen las etapas del flujo, y **cada una se identifica por sus
+entradas, no por su nombre**:
+
+| Tabla | Identidad | Consecuencia |
+|---|---|---|
+| `area` | bbox + hash del conjunto de `.osm` | dos corridas del mismo sitio son la misma área aunque se etiqueten distinto |
+| `red` | área + opciones de `netconvert` + hash del **contenido** del `.net.xml` | el hash ignora la cabecera (fecha, rutas): dos redes iguales hechas en días distintos coinciden |
+| `movilidad` | red + vehículos + duración + **semilla** + muestreo | otra semilla es otra movilidad; otro filtrado, **no** |
+| `candidatas` | red + `gmin` + `rho` | no depende de la movilidad: distintas demandas comparten candidatas |
+| `corrida` | movilidad + candidatas + radio + H | una fila por ejecución, con `campana`, `estado` y `carpeta` |
+| `resultado` · `instante` | métricas agregadas (N, K, \|CVR\|, Q_reach, M_h) y una fila por instante | responden "cómo evoluciona la cobertura" sin abrir un `.dat` |
+| `despliegue` | lo que devolvió CPLEX (RSU, objetivo, cobertura, tiempo, estado, topes por nivel) | web, y CLI con `--optimizar` o en campañas |
+| `campana` | la especificación YAML de cada campaña | `corrida.punto` y `corrida.factores` (JSON con los niveles y la física aplicada) enlazan cada corrida con ella |
+| `entorno` | Python, NumPy, SUMO, commit, hilos | sin esto un resultado de hace meses no se puede interpretar |
+
+Esto se comprobó a la primera de cambio: la versión inicial identificaba `area`
+por el nombre y `red` por los bytes del archivo, y cuatro corridas dejaron
+**3 áreas y 4 redes**. Con la identidad por contenido: **1 área, 1 red,
+2 movilidades**.
+
+**Para verlo:** [DB Browser for SQLite](https://sqlitebrowser.org) → *Open
+Database* → `datos\catalogo.sqlite`. Una corrida no está entera en ninguna
+tabla: pega la consulta 1 de [`consultas.sql`](consultas.sql) en *Execute SQL*
+(`Ctrl+Return`) y sale una fila por corrida con todo. Dos avisos: DB Browser no
+se refresca solo (`F5`), y si dejas **cambios sin guardar** retiene la escritura
+y `scn.py` falla con `database is locked` — *Write Changes* o ciérralo antes de
+lanzar corridas.
+
+### El almacén de etapas (`datos/cache/`)
+
+Cada etapa es una **función pura de sus entradas**: con el mismo mapa, los
+mismos parámetros y la misma semilla produce exactamente el mismo archivo
+(`pruebas/determinismo.py` lo demuestra). Entonces no hay motivo para
+calcularla dos veces. Antes de ejecutar una herramienta, el flujo busca la
+salida por una **clave derivada de sus entradas**; si existe, la enlaza en la
+carpeta de la corrida y la etapa cuesta milisegundos. Si no, la ejecuta y la
+guarda.
+
+Las claves se **encadenan**, así que nada se reutiliza por error:
+
+| Etapa | Clave | Se invalida al cambiar… |
+|---|---|---|
+| `red` | versión de SUMO + hash del OSM + opciones de `netconvert` | el área, el filtro de vías, SUMO |
+| `poly` | `red` | lo mismo |
+| `parseo` | `red` + `poly` | lo mismo (junctions y edificios JSON) |
+| `rutas` | `red` + vehículos + periodo + fin + **semilla** | la demanda o la semilla |
+| `fcd` | `rutas` + duración + muestreo + semilla | lo anterior o el muestreo |
+| `los` | `fcd` + conjunto de candidatas + radio + bidireccional | lo anterior, el filtrado o el radio |
+
+Medido sobre el mismo escenario, cuatro corridas seguidas:
+
+| Corrida | Qué se recalculó | Qué salió del almacén |
+|---|---|---|
+| semilla 42, 1ª vez | todo (M1 1,61 s) | — |
+| semilla 42 otra vez | nada (M1 **0,27 s**) | red, poly, parseo, rutas, traza, LoS |
+| `--gmin 3` | solo la LoS | red, poly, parseo, rutas, traza |
+| semilla 7 | rutas, traza, LoS | red, poly, parseo |
+
+Y lo que importa: **la web y el CLI comparten el almacén**. Un escenario
+generado desde el navegador sobre un área que el CLI ya calculó no ejecuta
+ninguna herramienta de SUMO. En una ciudad, cada etapa reutilizada ahorra su
+coste medido en este mismo documento: `netconvert` ~57 s, `duarouter` de uno a
+diez minutos según la demanda, y la LoS, que es O(V²) por instante.
+
+**Cómo se guarda.** Con **enlaces duros** (`os.link`): una red de 500 MB no se
+copia a cada carpeta, son dos nombres del mismo archivo. El riesgo es que una
+herramienta *sobrescriba en sitio* el archivo de la corrida y corrompa el del
+almacén; por eso, antes de ejecutar cualquier herramienta, se rompe el enlace
+(`almacen.desvincular`) y la herramienta crea un archivo nuevo. `meta.json` se
+escribe **al final**: una entrada sin él está incompleta y se ignora.
+
+| Control | Efecto |
+|---|---|
+| `SCN_CACHE=0` | desactiva el almacén (lo hace `pruebas/determinismo.py`: si la segunda corrida saliera de él, compararía un archivo consigo mismo) |
+| `SCN_CACHE_DIR` | otra carpeta (por defecto `datos/cache/`) |
+| `scn.py correr --sin-cache` | lo mismo que `SCN_CACHE=0` para una corrida |
+| `scn.py estado` | cuántas entradas y MB hay por etapa |
+
+> **Si cambias un algoritmo, sube su versión.** La clave no puede saber que el
+> código cambió: `VERSION_LOS` en `flujo.py` (línea de vista) y `VERSION_CFG`
+> en `simulacion_sumo.py` (lo que escribe el `.sumocfg`) forman parte de la
+> clave. Si no se suben, el almacén serviría resultados del método viejo.
 
 ---
 
@@ -2060,6 +2611,112 @@ En la pestaña **"🔗 Multisalto"** (dentro de los resultados del Módulo 2) pu
 - Ver una **tabla resumen por salto**: pares vehículo→RSU alcanzables acumulados, vehículos con al menos un RSU, y pares nuevos en cada salto.
 - Seleccionar y ver cualquier matriz `R_h`, `S_h` o `D_H` como tabla.
 - Ver el **vector `d`** con los vehículos totalmente desconectados (también resaltados con una alerta).
+
+---
+
+<a id="fisica"></a>
+
+## 📡 Capa física — de dónde salen el radio, P[h] y la capacidad (IEEE 802.11p)
+
+Tres números del modelo estaban puestos a ojo: el **radio de la OBU** (300 m),
+la **penalización por salto** (`P[h] = h`) y la **capacidad de una RSU**
+(`Cap = 300`, `L = 10`, sin unidades). El tutor entregó dos notas técnicas y un
+programa (carpeta [`Luis Urquiza/`](Luis%20Urquiza/)) que los derivan de un
+modelo físico publicado y reproducible con semilla. `backend/capa_fisica.py`
+hace de puente, y el panel **Capa física** de la interfaz permite elegir la
+configuración y aplicarla a M2 y M3 **sin perder los valores clásicos**.
+
+### Qué calcula el programa del tutor
+
+`channel_functions.py` simula, por Monte Carlo, si **un paquete llega** a una
+distancia dada. Cada paquete pasa por esta cadena:
+
+| Paso | Qué hace | Función |
+|---|---|---|
+| 1 | Potencia media recibida con el modelo *Empirical Inexpensive* de Sommer (exponente 2,2, 5,89 GHz, 24 dBm) | `empirical_inexpensive_power_dbm` |
+| 2 | Fading Rician (K = 10) sobre esa potencia, normalizado para conservar la media | `rician_power_w` |
+| 3 | Un interferente co-canal a distancia U(10, 2000) m, con su propio fading | ídem |
+| 4 | SINR = P_señal / (P_interferencia + kTB) | `thermal_noise_w` |
+| 5 | Umbral de sensibilidad del receptor por tasa PHY (−85 dBm a 3 Mb/s … −68 a 27) | `RX_SENSITIVITY_DBM` |
+| 6 | PER con el ajuste de dos matrices de Reinoso-Chisaguano (modelo 7, ns-3) | `per_reinoso_model7` |
+| 7 | Éxito ⟺ potencia ≥ sensibilidad **y** U(0,1) > PER | `simulate_packet_batch` |
+
+Repetido 5000 veces en cada distancia de 10 a 1000 m (`simulate_distance_curve`)
+da la curva P(éxito) vs distancia, y de ella los radios (`reliable_radius`):
+
+| | 6 Mb/s, 1000 B, con interferente | solo ruido |
+|---|---|---|
+| **r80** — mayor distancia con P ≥ 0,8 | **200 m** | 355 m |
+| **r90** — mayor distancia con P ≥ 0,9 | **100 m** | 315 m |
+| radio por sensibilidad (potencia media) | 440 m | 440 m |
+
+Y el **experimento multisalto** (`simulate_multihop`): rutas de H saltos con
+longitudes U(10, r_q); la ruta tiene éxito solo si **todos** los saltos lo
+tienen. Si un fallo obliga a retransmitir desde el origen, el número esperado de
+intentos es Γ_H = 1 / P(ruta):
+
+| H | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| Γ_H con r90 (6 Mb/s, 1000 B) | 1,054 | 1,107 | 1,169 | 1,217 | 1,286 | 1,373 |
+| Γ_H con r80 | 1,114 | 1,233 | 1,385 | 1,519 | 1,725 | 1,940 |
+
+La segunda nota da la **capacidad unicast** de una RSU tras los overheads
+MAC (preámbulo, SIGNAL, cabecera, ACK, SIFS, AIFS): `C₀(R, L) = 8L / T₀`, y la
+capacidad agregada de planificación **α·C₀** con α ≈ 0,80 (contienda
+moderada). A 6 Mb/s y 1000 B: C₀ = 4,92 Mb/s → α·C₀ = 3,94 Mb/s.
+`capa_fisica.capacidad` la implementa y `pruebas/capa_fisica.py` la
+verifica contra las **32 cifras** de sus tablas.
+
+**Cómo correr su programa tal cual** (desde su carpeta; usa `numpy`, `pandas`
+y `matplotlib`, que ya están en el `.venv`):
+
+```powershell
+cd "Luis Urquiza"
+..\.venv\Scripts\python.exe run_experiments.py --no-show --output-dir results
+```
+
+Deja `results/` con `distance_curves.csv`, `range_summary.csv`,
+`multihop_results.csv`, `parameters.json` y las figuras. Comprobado en esta
+máquina: reproduce sus CSV **exactamente** (las únicas diferencias son de
+10⁻¹⁴ en el último dígito de un float, y los finales de línea).
+
+### Cómo se conecta con el flujo
+
+| Del tutor | A tu modelo | Dónde |
+|---|---|---|
+| r80 / r90 | `radio_obu` de M2 (línea de vista V2I y V2V) | slider *Radio OBU*; `SimReq.radio_obu` (mínimo 10 m) |
+| Γ_1 … Γ_H | `P[1..H]` del `.dat` (`penalizaciones` en `construir_datos_opl`) | `OptReq.penalizaciones` |
+| α·C₀ y la carga por vehículo | `Cap[r]` y `L[s][v]`, **en la misma unidad (kb/s)** | `OptReq.cap_kbps`, `OptReq.carga_kbps` |
+
+`backend/capa_fisica.py` **importa `channel_functions.py` por ruta, sin
+copiarlo ni tocarlo**: lo que corre es el archivo que él entregó. Cuando la
+configuración pedida coincide con su experimento (semilla 20260914, 5000
+muestras) lee sus CSV oficiales; si se pide otra semilla u otro número de
+muestras, recalcula en vivo con su mismo código. Lo que se aplicó queda
+anotado en el `manifest.json` de la corrida (`fisica_radio`,
+`fisica_modelo`, `parametros_fisicos`) y en la consola del backend.
+
+**Lo que cambia, medido** sobre la misma área de prueba y la misma semilla:
+
+| | Radio | P[h] | RSU desplegadas | Cobertura |
+|---|---|---|---|---|
+| Valores clásicos | 300 m | 1, 2, 3 | **5** | **98,85 %** |
+| Capa física (6 Mb/s, 1000 B, r90) | 100 m | Γ_h = 1,05 / 1,11 / 1,17 | **17** | **81,61 %** |
+
+Con un radio justificado, el mismo mapa necesita más del triple de antenas y
+aun así deja un 18 % sin servicio. Es el tipo de tabla "antes / después" que
+convierte los parámetros en una decisión defendible.
+
+### Dos cosas que hay que saber al interpretar
+
+* **Con el objetivo lexicográfico, `P[h]` solo desempata.** El primer nivel
+  maximiza la cobertura y el segundo minimiza las RSU; `P[h]` entra en el
+  tercero, entre despliegues que ya empatan en los dos anteriores. Γ_h
+  cambiaría de lleno el resultado en la suma ponderada clásica, no aquí. `Cap`
+  y `L` sí restringen (Ec. 4) en cualquiera de los dos modos.
+* **La carga por vehículo (80 kb/s = 10 paquetes/s de 1000 B) es un supuesto
+  nuestro**, no viene de las notas. Está pendiente de confirmar con el tutor,
+  igual que si `P[h]` debe ser Γ_h o Γ_h − 1 (el panel ofrece las dos).
 
 ---
 
@@ -2462,6 +3119,11 @@ candidata, ámbar = V2V.
 
 ## 📁 Archivos de Salida
 
+> Desde la incorporación del CLI, la carpeta de cada corrida es
+> `datos/corridas/<etiqueta>/` (antes `output/`). Los nombres de archivo de
+> abajo no cambian; además cada carpeta lleva `manifest.json` (la corrida
+> descrita) y `claves.json` (las claves de reutilización de sus etapas).
+
 Todos los archivos se generan en la carpeta `output/`:
 
 ### Módulo 1 — Escenario VANET
@@ -2522,18 +3184,20 @@ community) sólo soporta **Python 3.7–3.10**, y el backend necesita **≥ 3.10
 **3.10** es la única versión que corre ambas cosas. La licencia académica de IBM
 da el motor completo gratis.
 
-### El escenario en `output/`
+### El escenario en `datos/corridas/`
 
-`output/` **no se versiona** (ver [Estructura del proyecto](#-estructura-del-proyecto)):
-son artefactos generados que pesaban 137 MB. Tras clonar el repositorio la carpeta
-no existe, y la app arranca **en blanco** — que es su comportamiento normal.
+`datos/` **no se versiona** (ver [Estructura del proyecto](#-estructura-del-proyecto)):
+son artefactos generados. Tras clonar el repositorio la carpeta no existe, y la
+app arranca **en blanco** — que es su comportamiento normal.
 
 Para crear un escenario: dibuja un área en el mapa y pulsa
-**Generar → Filtrar → Simular → Optimizar**. La API crea `output/` sola.
+**Generar → Filtrar → Simular → Optimizar**. La API crea la carpeta sola.
 
-Si ya existe un `output/` en local, la API lo **carga al arrancar** y lo puedes
-retomar sin regenerarlo (todos sus archivos son de una misma corrida, así que la
-animación es fiel).
+Al arrancar, la API **retoma la última carpeta de la web** (`datos/web_ultima.txt`)
+con los parámetros reales que guarda su `manifest.json` —vehículos, duración,
+semilla, grado, radio— y se puede seguir desde donde se dejó, incluso pulsar
+*Optimizar* directamente tras un reinicio. Si no hay ninguna, mira si queda un
+`output/` de versiones anteriores.
 
 ### Limitaciones y trabajo futuro
 

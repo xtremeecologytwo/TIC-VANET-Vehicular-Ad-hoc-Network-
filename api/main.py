@@ -26,21 +26,33 @@ from pydantic import BaseModel, Field
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if RAIZ not in sys.path:
     sys.path.insert(0, RAIZ)
-OUTPUT_DIR = os.path.join(RAIZ, "output")
+# Donde se guardan las corridas. `output/` era la unica carpeta de la web:
+# cada "Generar escenario" la pisaba y no quedaba rastro de la anterior. Ahora
+# cada escenario de la web tiene su carpeta bajo datos/corridas/, como las del
+# CLI; `output/` solo se lee si existe de antes (compatibilidad).
+DATOS = os.path.join(RAIZ, "datos")
+CORRIDAS = os.path.join(DATOS, "corridas")
+CATALOGO = os.path.join(DATOS, "catalogo.sqlite")
+PUNTERO_WEB = os.path.join(DATOS, "web_ultima.txt")   # ultima carpeta de la web
+OUTPUT_DIR = os.path.join(RAIZ, "output")             # legado
 
-from backend.descargar_osm import descargar_mapa_osm
 from backend.procesos import cancelar_todo
-from backend.sumo_pipeline import ejecutar_pipeline_sumo
-from backend.parsear_xml import (
-    parsear_junctions, parsear_edificios, obtener_proyeccion,
-    filtrar_junctions_rsu, convertir_xy_a_lonlat,
-)
-from backend.simulacion_sumo import ejecutar_simulacion_sumo, parsear_fcd
-from backend.visibilidad import (
-    generar_tuplas_visibilidad, guardar_tuplas_json,
-    generar_tuplas_v2v, guardar_tuplas_v2v_json,
-)
+# El flujo M1->M2 vive en el nucleo, no aqui: la API y el CLI son dos
+# clientes del mismo codigo (ver backend/flujo.py).
+from backend import flujo
+from backend.sumo_pipeline import SEMILLA_POR_DEFECTO
+from backend.parsear_xml import obtener_proyeccion, convertir_xy_a_lonlat
+from backend.simulacion_sumo import parsear_fcd
 from backend.exportar_dat import exportar_dat_desde_memoria
+# La web guarda cada corrida igual que el CLI: carpeta propia, manifest.json y
+# fila en el catalogo (ver backend/catalogo.py). El CLI queda para los lotes.
+from backend import almacen
+# Capa fisica de 802.11p (notas del tutor): radios r80/r90, Γ_H y capacidad.
+from backend import capa_fisica as fisica
+from backend import descargar_osm
+import signal
+from backend.catalogo import (Catalogo, registrar_corrida_completa,
+                              manifest_actualizar, manifest_leer)
 from backend.multisalto import analizar_timestep
 from optimizacion.optimizar_rsu import optimizar
 from api import cronometro as cron
@@ -61,6 +73,15 @@ STATE: dict = {
     "matrices_v2v": None,
     "tuplas_v2v": None,
     "params": {},
+    # Objetos del nucleo (backend/flujo.py) de la ultima corrida. STATE es
+    # solo una CACHE para que la interfaz pueda pedir instantes sueltos sin
+    # rehacer el flujo; la logica ya no vive aqui.
+    "escenario": None,
+    "candidatas": None,
+    "conectividad": None,
+    # Carpeta de la corrida en curso (datos/corridas/web_...). Ahi van todos
+    # los archivos y el manifest.json; es lo que se retoma al reiniciar.
+    "carpeta": None,
 }
 
 
@@ -132,41 +153,182 @@ app.add_middleware(
 )
 
 
+def _bbox_de_la_red(net_xml: str) -> tuple:
+    """
+    Recupera el rectangulo geografico de un .net.xml ya generado.
+
+    SUMO lo guarda en el atributo `origBoundary` del elemento <location>, como
+    "oeste,sur,este,norte". Se usa al rehidratar: el bbox original no se guarda
+    en ningun JSON, pero la red si lo lleva dentro.
+    """
+    import re
+    try:
+        with open(net_xml, encoding="utf-8", errors="ignore") as f:
+            for _ in range(40):
+                linea = f.readline()
+                if "origBoundary=" in linea:
+                    v = re.search(r'origBoundary="([^"]+)"', linea).group(1)
+                    w, s_, e, n_ = (float(x) for x in v.split(","))
+                    return (w, s_, e, n_)
+    except OSError:
+        pass
+    return (0.0, 0.0, 0.0, 0.0)
+
+
+def _carpeta_previa() -> str | None:
+    """
+    La carpeta que se retoma al arrancar: la ultima de la web, si su red
+    sigue en disco; si no, `output/` de versiones anteriores.
+    """
+    try:
+        with open(PUNTERO_WEB, encoding="utf-8") as f:
+            c = f.read().strip()
+        if c and os.path.isfile(os.path.join(c, "mapa.net.xml")):
+            return c
+    except OSError:
+        pass
+    if os.path.isfile(os.path.join(OUTPUT_DIR, "mapa.net.xml")):
+        return OUTPUT_DIR
+    return None
+
+
+def _apuntar_web(carpeta: str) -> None:
+    os.makedirs(DATOS, exist_ok=True)
+    with open(PUNTERO_WEB, "w", encoding="utf-8") as f:
+        f.write(carpeta)
+
+
+def abortar_todo() -> list[str]:
+    """
+    Corta todo lo que este en marcha: subprocesos de SUMO y descargas de OSM.
+
+    Lo llaman "Generar escenario" (un escenario nuevo es NUEVO) y el
+    manejador de Ctrl+C. Devuelve que subprocesos mato, para el log.
+    """
+    cortados = cancelar_todo()
+    descargar_osm.abortar()
+    return cortados
+
+
+@app.on_event("startup")
+def _ctrl_c_que_pare():
+    """
+    Hace que Ctrl+C pare la API aunque haya una peticion bloqueada.
+
+    uvicorn, al recibir la senal, deja de aceptar conexiones y ESPERA a que
+    terminen las peticiones en curso. Los endpoints corren en hilos de anyio
+    -que no son daemon- y uno bloqueado en una descarga de Overpass o en
+    netconvert no vuelve nunca: el proceso se queda vivo con "Waiting for
+    background tasks". Visto en consola, mas de una vez.
+
+    Aqui se envuelve el manejador de uvicorn: antes de cederle la senal se
+    matan los subprocesos y se abortan las descargas, de modo que esas
+    peticiones fallan en ~1 s y el cierre puede terminar. Solo se puede
+    instalar desde el hilo principal, que es donde Starlette ejecuta los
+    handlers de arranque sincronos.
+    """
+    import threading
+    if threading.current_thread() is not threading.main_thread():
+        return
+    senales = [signal.SIGINT, signal.SIGTERM]
+    if hasattr(signal, "SIGBREAK"):
+        senales.append(signal.SIGBREAK)
+    for sig in senales:
+        previo = signal.getsignal(sig)
+
+        def manejador(num, marco, _previo=previo):
+            cortados = abortar_todo()
+            if cortados:
+                print(f"  [cierre] cortados: {', '.join(cortados)}", flush=True)
+            if callable(_previo):
+                _previo(num, marco)
+
+        try:
+            signal.signal(sig, manejador)
+        except (ValueError, OSError):
+            pass
+
+
 @app.on_event("startup")
 def _cargar_output_existente():
-    """Si hay un escenario previo en output/, lo carga para poder retomarlo."""
+    """Si hay un escenario previo en disco, lo carga para poder retomarlo."""
     import json
     try:
-        net = os.path.join(OUTPUT_DIR, "mapa.net.xml")
-        if not os.path.exists(net):
+        carpeta = _carpeta_previa()
+        if not carpeta:
             return
+        net = os.path.join(carpeta, "mapa.net.xml")
+        # Los parametros reales de la corrida estan en su manifest.json (lo
+        # completa cada clic). Sin manifest -la carpeta output/ de antes- se
+        # usan los valores por defecto, que es lo que habia.
+        man = manifest_leer(carpeta)
+        STATE["carpeta"] = carpeta
         STATE["net_xml"] = net
         STATE["proy"] = obtener_proyeccion(net)
-        with open(os.path.join(OUTPUT_DIR, "junctions_limpias.json"), encoding="utf-8") as f:
+        with open(os.path.join(carpeta, "junctions_limpias.json"), encoding="utf-8") as f:
             STATE["junctions"] = json.load(f)
-        with open(os.path.join(OUTPUT_DIR, "edificios_limpios.json"), encoding="utf-8") as f:
+        with open(os.path.join(carpeta, "edificios_limpios.json"), encoding="utf-8") as f:
             STATE["edificios"] = json.load(f)
-        v2i_path = os.path.join(OUTPUT_DIR, "tuplas_visibilidad.json")
+
+        bbox = tuple(man["bbox"]) if man.get("bbox") else _bbox_de_la_red(net)
+        STATE["bbox"] = list(bbox)
+        STATE["escenario"] = flujo.Escenario(
+            carpeta=carpeta, bbox=bbox,
+            num_vehiculos=int(man.get("vehiculos", 0)),
+            tiempo_min=int(man.get("duracion_min", 120)),
+            semilla=int(man.get("semilla", SEMILLA_POR_DEFECTO)),
+            osm_path=os.path.join(carpeta, "map.osm"), net_xml=net,
+            poly_xml=os.path.join(carpeta, "mapa.poly.xml"),
+            junctions=STATE["junctions"], edificios=STATE["edificios"],
+            proy=STATE["proy"], pasos=[], claves=almacen.claves_leer(carpeta),
+        )
+        STATE["params"] = {"num_vehiculos": STATE["escenario"].num_vehiculos,
+                           "tiempo_min": STATE["escenario"].tiempo_min,
+                           "semilla": STATE["escenario"].semilla}
+
+        d1 = d2 = None
+        v2i_path = os.path.join(carpeta, "tuplas_visibilidad.json")
         if os.path.exists(v2i_path):
             with open(v2i_path, encoding="utf-8") as f:
-                d = json.load(f)
-            STATE["rsus"] = d.get("rsus")
-            STATE["tuplas_v2i"] = d.get("tuplas")
-        v2v_path = os.path.join(OUTPUT_DIR, "tuplas_v2v.json")
+                d1 = json.load(f)
+            STATE["rsus"] = d1.get("rsus")
+            STATE["tuplas_v2i"] = d1.get("tuplas")
+            if STATE["rsus"]:
+                STATE["candidatas"] = flujo.Candidatas(
+                    rsus=STATE["rsus"],
+                    min_grado=int(man.get("min_grado", 4)),
+                    radio_cluster=float(man.get("radio_cluster", 20.0)),
+                    n_junctions=len(STATE["junctions"] or {}))
+        v2v_path = os.path.join(carpeta, "tuplas_v2v.json")
         if os.path.exists(v2v_path):
             with open(v2v_path, encoding="utf-8") as f:
-                d = json.load(f)
-            STATE["matrices_v2v"] = d.get("matrices")
-            STATE["tuplas_v2v"] = d.get("tuplas_v2v")
+                d2 = json.load(f)
+            STATE["matrices_v2v"] = d2.get("matrices")
+            STATE["tuplas_v2v"] = d2.get("tuplas_v2v")
         # Cargar el FCD (posiciones vehiculares) para que la animación de
         # conectividad funcione al retomar un escenario ya guardado. El paso de
         # muestreo se infiere de la separación entre snapshots de las matrices.
-        fcd_path = os.path.join(OUTPUT_DIR, "fcd.xml")
+        fcd_path = os.path.join(carpeta, "fcd.xml")
         if os.path.exists(fcd_path) and STATE["matrices_v2v"]:
             keys = sorted(float(k) for k in STATE["matrices_v2v"].keys())
             step = (keys[1] - keys[0]) if len(keys) >= 2 else 120.0
             datos, _ = parsear_fcd(fcd_path, step)
             STATE["datos_fcd"] = datos
+        if d1 and d2 and STATE["datos_fcd"] is not None:
+            # Con los dos JSON y la traza se reconstruye la Conectividad
+            # entera: asi M3 puede registrar la corrida aunque la API se haya
+            # reiniciado entre M2 y M3.
+            con = flujo.Conectividad(
+                datos_fcd=STATE["datos_fcd"], tuplas_v2i=STATE["tuplas_v2i"],
+                tuplas_v2v=STATE["tuplas_v2v"], matrices_v2v=STATE["matrices_v2v"],
+                est_v2i=d1.get("parametros", {}), est_v2v=d2.get("parametros", {}),
+                radio_obu=float(man.get("radio_obu", 300.0)),
+                step_min=int(man.get("muestreo_min", 2)),
+                bidireccional=bool(man.get("bidireccional", True)))
+            STATE["conectividad"] = con
+            STATE["params"].update({"radio_obu": con.radio_obu,
+                                    "step_min": con.step_min,
+                                    "bidireccional": con.bidireccional})
     except Exception:
         # Arranque sin escenario previo: no es error.
         pass
@@ -189,6 +351,12 @@ class ScenarioReq(BaseModel):
     # a partir de unos miles de vehículos.
     num_vehiculos: int = Field(100, ge=5, le=1_000_000)
     tiempo_min: int = Field(120, ge=1, le=240)   # hasta 4 horas simuladas
+    # SEMILLA del escenario. Fija la generacion de rutas (randomTrips) y la
+    # simulacion (sumo): con la misma semilla y los mismos parametros, la traza
+    # se repite exactamente. `null` toma SEMILLA_POR_DEFECTO (42, la del
+    # articulo V5). Es lo que permite comparar configuraciones sobre la MISMA
+    # movilidad y rehacer una corrida meses despues.
+    semilla: int | None = Field(None, ge=0)
 
 
 class RsuReq(BaseModel):
@@ -197,9 +365,13 @@ class RsuReq(BaseModel):
 
 
 class SimReq(BaseModel):
-    radio_obu: float = Field(300.0, ge=50, le=500)
+    # Minimo 10 m: con 27 Mb/s e interferente, r90 es de 20 m (nota del tutor).
+    radio_obu: float = Field(300.0, ge=10, le=500)
     step_min: int = Field(2, ge=1, le=30)
     bidireccional: bool = True
+    # De donde salio el radio, si vino del panel de capa fisica (solo se anota
+    # en el manifest; no cambia el calculo).
+    fisica: dict | None = None
 
 
 class OptReq(BaseModel):
@@ -217,6 +389,30 @@ class OptReq(BaseModel):
     # soluciones que la alcanzan, la que use menos RSU. `false` vuelve a la
     # suma ponderada clásica (útil para comparar).
     lexicografico: bool = True
+    # ---- Capa fisica (opcional; None = valores clasicos) ----
+    # P[1..H] explicitos: los Γ_h del experimento multisalto del tutor en vez
+    # de 1..H. Se recortan a H si vienen de mas.
+    penalizaciones: list[float] | None = None
+    # Cap[r] y L[s][v] en la MISMA unidad (kb/s): α·C₀ de la nota de capacidad
+    # y la carga por vehiculo elegida en el panel.
+    cap_kbps: float | None = Field(None, gt=0)
+    carga_kbps: float | None = Field(None, gt=0)
+    # Etiqueta de la configuracion fisica (tasa, bytes, criterio...), para el manifest.
+    fisica: dict | None = None
+
+
+def _parametros_fisicos(req: "OptReq") -> dict:
+    """kwargs de `construir_datos_opl` que vienen del panel de capa fisica; vacio = como siempre."""
+    extra: dict = {}
+    if req.penalizaciones is not None:
+        if len(req.penalizaciones) < req.H:
+            raise HTTPException(400, f"penalizaciones trae {len(req.penalizaciones)} valores y H={req.H}")
+        extra["penalizaciones"] = [float(x) for x in req.penalizaciones[:req.H]]
+    if req.cap_kbps is not None:
+        extra["cap_real"] = float(req.cap_kbps)
+    if req.carga_kbps is not None:
+        extra["carga_default"] = float(req.carga_kbps)
+    return extra
 
 
 # ============================================================
@@ -239,6 +435,7 @@ def state():
         "n_edificios": len(s["edificios"]) if s["edificios"] else 0,
         "n_rsus": len(s["rsus"]) if s["rsus"] else 0,
         "bounds": _bounds() if s["proy"] else None,
+        "carpeta": s.get("carpeta"),
     }
 
 
@@ -261,12 +458,16 @@ def scenario_generate(req: ScenarioReq):
     # corre en un hilo del threadpool y un hilo de Python no se interrumpe.
     # Lo que sí se puede matar es el subproceso de SUMO, que es lo que de verdad
     # consume la máquina (ver backend/procesos.py).
-    cortados = cancelar_todo()
+    cortados = abortar_todo()
 
     # Un escenario nuevo abre una sesión de medición nueva: los tiempos de las
     # etapas siguientes se acumulan sobre esta corrida (ver api/cronometro.py).
+    # La semilla se resuelve UNA vez y se usa en randomTrips y en sumo, para
+    # que las dos etapas pertenezcan al mismo escenario reproducible.
+    semilla = SEMILLA_POR_DEFECTO if req.semilla is None else req.semilla
+
     cron.nueva_sesion(f"escenario nuevo · {req.num_vehiculos} vehiculos · "
-                      f"{req.tiempo_min} min")
+                      f"{req.tiempo_min} min · semilla {semilla}")
     if cortados:
         cron.nota(f"corrida anterior cortada: {', '.join(cortados)}")
 
@@ -276,123 +477,112 @@ def scenario_generate(req: ScenarioReq):
     STATE["junctions"] = None
     STATE["edificios"] = None
     STATE["rsus"] = None
-    with cron.etapa("M1 - Generar escenario"):
-        with cron.subetapa("Descarga OSM"):
-            osm_path, err = descargar_mapa_osm(b.min_lon, b.min_lat,
-                                               b.max_lon, b.max_lat, OUTPUT_DIR)
-        if err:
-            raise HTTPException(400, f"Descarga OSM: {err}")
+    # Carpeta propia por escenario, como en el CLI. Lleva la hora porque los
+    # parametros del filtrado y de M2 aun no se conocen, y dos sesiones con la
+    # misma demanda no deben pisarse. Los archivos pesados no se duplican: si
+    # la red o las rutas ya se calcularon, llegan como enlaces del almacen.
+    from datetime import datetime
+    etiqueta = (f"web_v{req.num_vehiculos}_t{req.tiempo_min}_s{semilla}_"
+                f"{datetime.now():%Y%m%d-%H%M%S}")
+    carpeta = os.path.join(CORRIDAS, etiqueta)
+    os.makedirs(carpeta, exist_ok=True)
+    bbox = (b.min_lon, b.min_lat, b.max_lon, b.max_lat)
+    try:
+        esc = flujo.generar_escenario(
+            bbox=bbox, carpeta=carpeta, num_vehiculos=req.num_vehiculos,
+            tiempo_min=req.tiempo_min, semilla=semilla, registro=cron)
+    except flujo.ErrorFlujo as e:
+        raise HTTPException(e.codigo, str(e))
+    STATE["carpeta"] = carpeta
+    STATE["candidatas"] = None
+    STATE["conectividad"] = None
+    manifest_actualizar(
+        carpeta, origen="web", bbox=list(bbox), vehiculos=esc.num_vehiculos,
+        duracion_min=esc.tiempo_min, semilla=esc.semilla, claves=esc.claves,
+        origen_osm=esc.origen_osm,
+        pasos=[{"paso": p["paso"], "exito": p["exito"], "segundos": p.get("segundos"),
+                "cache": p.get("cache", False)} for p in esc.pasos])
+    _apuntar_web(carpeta)
 
-        periodo = (req.tiempo_min * 60) / req.num_vehiculos
-        # Las tres herramientas se cronometran por separado: iban en una sola
-        # linea y no habia forma de ver cual costaba. Con muchos vehiculos
-        # randomTrips (que por dentro llama a duarouter, un camino minimo por
-        # vehiculo) se lleva mas del 95 % de esta etapa.
-        with cron.subetapa("SUMO (netconvert + polyconvert + trips)"):
-            pasos = ejecutar_pipeline_sumo(osm_path, OUTPUT_DIR,
-                                           num_vehiculos=req.num_vehiculos,
-                                           periodo_salida=periodo)
-        for _p in pasos:
-            if _p.get("segundos") is not None:
-                cron.nota(f"{_p['paso']:.<28} {_p['segundos']:8.3f} s")
-        if any(not p["exito"] for p in pasos):
-            fallo = next(p for p in pasos if not p["exito"])
-            raise HTTPException(500, f"SUMO ({fallo['paso']}): {fallo['mensaje']}")
-
-        net = os.path.join(OUTPUT_DIR, "mapa.net.xml")
-        poly = os.path.join(OUTPUT_DIR, "mapa.poly.xml")
-        with cron.subetapa("Parseo junctions + edificios"):
-            junctions, ej = parsear_junctions(net, OUTPUT_DIR)
-            edificios, ee = parsear_edificios(poly, OUTPUT_DIR)
-        if ej or ee:
-            raise HTTPException(500, f"Parseo: {ej or ee}")
-
-        STATE.update({
-            "junctions": junctions, "edificios": edificios,
-            "proy": obtener_proyeccion(net), "net_xml": net,
-            "bbox": [b.min_lon, b.min_lat, b.max_lon, b.max_lat],
-            "rsus": None, "datos_fcd": None, "tuplas_v2i": None,
-            "matrices_v2v": None, "tuplas_v2v": None,
-            "params": {"num_vehiculos": req.num_vehiculos, "tiempo_min": req.tiempo_min},
-        })
-        with cron.subetapa("Conversion a lat/lon (respuesta)"):
-            respuesta = {
-                "n_junctions": len(junctions), "n_edificios": len(edificios),
-                "edificios": _edificios_geojson(), "bounds": _bounds(),
-                "pasos": [{"paso": p["paso"], "exito": p["exito"],
-                           "mensaje": p["mensaje"]} for p in pasos],
-            }
+    STATE.update({
+        "junctions": esc.junctions, "edificios": esc.edificios,
+        "proy": esc.proy, "net_xml": esc.net_xml,
+        "bbox": list(esc.bbox),
+        "rsus": None, "datos_fcd": None, "tuplas_v2i": None,
+        "matrices_v2v": None, "tuplas_v2v": None,
+        "escenario": esc,
+        "params": {"num_vehiculos": esc.num_vehiculos,
+                   "tiempo_min": esc.tiempo_min,
+                   "semilla": esc.semilla},
+    })
+    with cron.subetapa("Conversion a lat/lon (respuesta)"):
+        respuesta = {
+            "n_junctions": len(esc.junctions), "n_edificios": len(esc.edificios),
+            "edificios": _edificios_geojson(), "bounds": _bounds(),
+            "pasos": [{"paso": p["paso"], "exito": p["exito"],
+                       "mensaje": p["mensaje"]} for p in esc.pasos],
+        }
     return respuesta
 
 
 @app.post("/api/rsu/filter")
 def rsu_filter(req: RsuReq):
     """M1 — filtra las junctions a RSU candidatas (grado + clustering)."""
-    if STATE["junctions"] is None:
+    if STATE.get("escenario") is None:
         raise HTTPException(409, "Genera un escenario primero.")
-    with cron.etapa(f"Filtrar RSU candidatas (grado>={req.min_grado}, "
-                    f"cluster={req.radio_cluster:g} m)"):
-        with cron.subetapa("Grado + clustering espacial"):
-            rsus = filtrar_junctions_rsu(STATE["junctions"], STATE["net_xml"],
-                                         min_grado=req.min_grado,
-                                         radio_cluster=req.radio_cluster)
-        STATE["rsus"] = rsus
-        n_orig = len(STATE["junctions"])
-        respuesta = {
-            "rsus": _rsus_geojson(rsus),
-            "n_candidatas": len(rsus), "n_junctions": n_orig,
-            "reduccion_pct": round(100 * (1 - len(rsus) / max(n_orig, 1)), 1),
-        }
-    return respuesta
+    cand = flujo.filtrar_candidatas(STATE["escenario"],
+                                    min_grado=req.min_grado,
+                                    radio_cluster=req.radio_cluster,
+                                    registro=cron)
+    STATE["rsus"] = cand.rsus
+    STATE["candidatas"] = cand
+    if STATE.get("carpeta"):
+        manifest_actualizar(STATE["carpeta"], min_grado=cand.min_grado,
+                            radio_cluster=cand.radio_cluster, n_candidatas=cand.n)
+    return {
+        "rsus": _rsus_geojson(cand.rsus),
+        "n_candidatas": cand.n, "n_junctions": cand.n_junctions,
+        "reduccion_pct": round(cand.reduccion_pct, 1),
+    }
 
 
 @app.post("/api/simulate")
 def simulate(req: SimReq):
     """M2 — corre SUMO, calcula LoS y genera tuplas V2I + V2V + matrices."""
-    if STATE["rsus"] is None:
+    if STATE.get("candidatas") is None:
         raise HTTPException(409, "Filtra las RSU primero.")
 
-    tiempo_sim = STATE["params"].get("tiempo_min", 120) * 60
-    step = req.step_min * 60.0
-    with cron.etapa(f"M2 - Simular conectividad (radio {req.radio_obu:g} m, "
-                    f"muestreo {req.step_min} min)"):
-        with cron.subetapa("Simulacion SUMO (trafico + FCD)"):
-            fcd_path, err = ejecutar_simulacion_sumo(OUTPUT_DIR, tiempo_sim,
-                                                     periodo_fcd=step)
-        if err:
-            raise HTTPException(500, f"Simulación SUMO: {err}")
-        with cron.subetapa("Parseo del FCD"):
-            datos_fcd, ef = parsear_fcd(fcd_path, step)
-        if ef:
-            raise HTTPException(500, f"Parseo FCD: {ef}")
+    try:
+        con = flujo.simular_conectividad(
+            STATE["escenario"], STATE["candidatas"],
+            radio_obu=req.radio_obu, step_min=req.step_min,
+            bidireccional=req.bidireccional, registro=cron)
+    except flujo.ErrorFlujo as e:
+        raise HTTPException(e.codigo, str(e))
 
-        with cron.subetapa("LoS V2I (tuplas de visibilidad)"):
-            tuplas_v2i, est_v2i = generar_tuplas_visibilidad(
-                datos_fcd, STATE["rsus"], STATE["edificios"], radio_obu=req.radio_obu)
-            guardar_tuplas_json(tuplas_v2i, est_v2i, STATE["rsus"], OUTPUT_DIR)
-
-        with cron.subetapa("LoS V2V (matriz A por instante)"):
-            tuplas_v2v, matrices_v2v, est_v2v = generar_tuplas_v2v(
-                datos_fcd, STATE["edificios"], radio_obu=req.radio_obu,
-                bidireccional=req.bidireccional)
-            guardar_tuplas_v2v_json(tuplas_v2v, matrices_v2v, est_v2v, OUTPUT_DIR)
-
-        STATE.update({
-            "datos_fcd": datos_fcd, "tuplas_v2i": tuplas_v2i,
-            "matrices_v2v": matrices_v2v, "tuplas_v2v": tuplas_v2v,
-            "params": {**STATE["params"], "radio_obu": req.radio_obu,
-                       "step_min": req.step_min, "bidireccional": req.bidireccional},
-        })
-    timesteps = sorted(float(t) for t in datos_fcd.keys())
+    STATE.update({
+        "datos_fcd": con.datos_fcd, "tuplas_v2i": con.tuplas_v2i,
+        "matrices_v2v": con.matrices_v2v, "tuplas_v2v": con.tuplas_v2v,
+        "conectividad": con,
+        "params": {**STATE["params"], "radio_obu": con.radio_obu,
+                   "step_min": con.step_min,
+                   "bidireccional": con.bidireccional},
+    })
+    if STATE.get("carpeta"):
+        manifest_actualizar(STATE["carpeta"], radio_obu=con.radio_obu,
+                            muestreo_min=con.step_min, bidireccional=con.bidireccional,
+                            n_instantes=len(con.timesteps),
+                            fisica_radio=req.fisica,
+                            claves=almacen.claves_leer(STATE["carpeta"]))
     return {
-        "v2i": {"total_tuplas": est_v2i["total_tuplas"],
-                "total_timesteps": est_v2i["total_timesteps"],
-                "n_rsus": len(est_v2i["resumen_por_rsu"])},
-        "v2v": {"total_tuplas": est_v2v["total_tuplas_v2v"],
-                "pares_en_rango": est_v2v["total_pares_en_rango"],
-                "n_vehiculos": len(est_v2v["resumen_por_vehiculo"]),
-                "bidireccional": est_v2v["bidireccional"]},
-        "timesteps": timesteps,
+        "v2i": {"total_tuplas": con.est_v2i["total_tuplas"],
+                "total_timesteps": con.est_v2i["total_timesteps"],
+                "n_rsus": len(con.est_v2i["resumen_por_rsu"])},
+        "v2v": {"total_tuplas": con.est_v2v["total_tuplas_v2v"],
+                "pares_en_rango": con.est_v2v["total_pares_en_rango"],
+                "n_vehiculos": len(con.est_v2v["resumen_por_vehiculo"]),
+                "bidireccional": con.est_v2v["bidireccional"]},
+        "timesteps": con.timesteps,
     }
 
 
@@ -452,7 +642,11 @@ def optimize(req: OptReq):
     """M3 — construye el CVR, resuelve con docplex/CPLEX y devuelve el despliegue."""
     if STATE["matrices_v2v"] is None or STATE["tuplas_v2i"] is None:
         raise HTTPException(409, "Corre la simulación primero.")
-    dat = os.path.join(RAIZ, "optimizacion", "rsu_backend.dat")
+    carpeta = STATE.get("carpeta") or OUTPUT_DIR
+    dat = os.path.join(carpeta, "dataset.dat")
+    # Copia de compatibilidad: los scripts de optimizacion/ (explicar, OPL)
+    # siguen leyendo rsu_backend.dat.
+    dat_legado = os.path.join(RAIZ, "optimizacion", "rsu_backend.dat")
     # MaxR: si el frontend no manda número, `exportar_dat` usa el nº de RSU
     # candidatas conectadas, con lo que la restricción no ata (comportamiento
     # por defecto). El nombre de la etapa deja constancia de cuál se midió.
@@ -462,10 +656,20 @@ def optimize(req: OptReq):
     modo = "lexicografico" if req.lexicografico else "suma ponderada"
     with cron.etapa(f"M3 - Optimizar despliegue (H={req.H}, MaxR={etiqueta_maxr}, "
                     f"tope={etiqueta_lim}, {modo})"):
-        with cron.subetapa("Multisalto + construccion del CVR (.dat)"):
+        with cron.subetapa("Multisalto + construccion del CVR (.dat)") as m_cvr:
+            extra = _parametros_fisicos(req)
             datos = exportar_dat_desde_memoria(
                 STATE["matrices_v2v"], STATE["tuplas_v2i"], STATE["rsus"], dat,
-                H=req.H, max_rsu=req.max_rsu, solo_rsu_conectados=True)
+                H=req.H, max_rsu=req.max_rsu, solo_rsu_conectados=True, **extra)
+            if extra:
+                cron.nota("capa fisica: " + ", ".join(
+                    f"{k}={v if not isinstance(v, list) else [round(x, 3) for x in v]}"
+                    for k, v in extra.items()))
+            try:
+                import shutil
+                shutil.copyfile(dat, dat_legado)
+            except OSError:
+                pass
         with cron.subetapa("Solver CPLEX (branch & bound)") as medida:
             res = optimizar(datos, mostrar_log=False,
                             limite_tiempo=req.limite_tiempo,
@@ -494,7 +698,55 @@ def optimize(req: OptReq):
                       f"multisalto {rep['multisalto']:.0f} | "
                       f"desconectados {rep['desconectados']:.0f}")
 
+        # --- guardar como el CLI: catalogo + manifest.json ---
+        # Hace falta la Conectividad en memoria (la hay tras M2, y tambien al
+        # retomar una carpeta con sus JSON). Un fallo aqui no invalida el
+        # despliegue ya calculado: se anota en consola y se responde igual.
+        uuid_corrida = None
+        if (STATE.get("conectividad") is not None
+                and STATE.get("escenario") is not None
+                and STATE.get("candidatas") is not None):
+            with cron.subetapa("Registro en el catalogo"):
+                try:
+                    cat = Catalogo(CATALOGO)
+                    try:
+                        uuid_corrida, agregadas, _ = registrar_corrida_completa(
+                            cat, esc=STATE["escenario"], cand=STATE["candidatas"],
+                            con=STATE["conectividad"], datos=datos, carpeta=carpeta,
+                            H=req.H, campana="web",
+                            tiempos={"CVR + exportacion": m_cvr.segundos})
+                        cat.guardar_despliegue(
+                            uuid_corrida, motor="docplex",
+                            lexicografico=req.lexicografico, max_rsu=req.max_rsu,
+                            limite_tiempo=req.limite_tiempo, status=res["status"],
+                            objetivo=res["objetivo"], objetivos=res.get("objetivos"),
+                            n_rsu=res["n_rsu_elegidos"],
+                            ids=res.get("seleccionados_backend"), cobertura=rep,
+                            segundos_solver=float(seg_motor),
+                            segundos_total=medida.segundos)
+                    finally:
+                        cat.cerrar()
+                    manifest_actualizar(
+                        carpeta, uuid=uuid_corrida, campana="web", H=req.H,
+                        metricas=agregadas,
+                        fisica_modelo=req.fisica, parametros_fisicos=extra or None,
+                        despliegue={"status": res["status"], "objetivo": res["objetivo"],
+                                    "objetivos": res.get("objetivos"),
+                                    "n_rsu": res["n_rsu_elegidos"],
+                                    "ids": res.get("seleccionados_backend"),
+                                    "cobertura": rep, "max_rsu": req.max_rsu,
+                                    "limite_tiempo": req.limite_tiempo,
+                                    "lexicografico": req.lexicografico,
+                                    "segundos_solver": float(seg_motor)})
+                    cron.nota(f"corrida {uuid_corrida} guardada en {carpeta}")
+                except Exception as e:  # noqa: BLE001 - el despliegue ya esta calculado
+                    cron.nota(f"no se pudo registrar la corrida: {e}")
+        else:
+            cron.nota("corrida no registrada: falta la conectividad en memoria")
+
         respuesta = {
+            "corrida": uuid_corrida,
+            "carpeta": carpeta,
             "resumen": datos["resumen"],
             "objetivo": res["objetivo"],
             "n_desplegadas": res["n_rsu_elegidos"],
@@ -536,13 +788,27 @@ def _interpretar_status(status: str, segundos: float, limite: float | None) -> d
         "optimo" (bool) y "corto_por_tiempo" (bool).
     """
     s = (status or "").lower()
-    optimo = "optimal" in s
+    # "multi-objective non-optimal" contiene "optimal": se excluye a mano, o
+    # una solucion cortada por tiempo se mostraria como "Optimo demostrado".
+    optimo = "optimal" in s and "non-optimal" not in s
     # CPLEX dice "time limit exceeded"; como red de seguridad, si el solver
     # consumió prácticamente todo el presupuesto sin declararse óptimo, se
     # trata igual (el reloj mandó, no la dificultad real del problema).
-    corto = ("time limit" in s) or (
+    corto = ("time limit" in s) or ("non-optimal" in s) or ("stopped" in s) or (
         limite is not None and not optimo and segundos >= limite * 0.97)
 
+    if "stopped" in s or "abort" in s:
+        # Con topes por nivel, agotar el tiempo da "non-optimal" CON solución;
+        # "stopped"/"aborted" es una interrupción o un fallo, y no hay despliegue.
+        return {"etiqueta": "Sin solución",
+                "detalle": "CPLEX se detuvo sin devolver un despliegue (interrupción o error).",
+                "optimo": False, "corto_por_tiempo": False}
+    if "sin cobertura" in s:
+        # Nivel 1 (cobertura) cortado con la solución trivial: no hay despliegue.
+        return {"etiqueta": "Sin solución útil",
+                "detalle": ("Se agotó el tiempo de la etapa de cobertura sin encontrar un "
+                            "despliegue. Sube el límite del solver."),
+                "optimo": False, "corto_por_tiempo": True}
     if optimo:
         etiqueta = "Óptimo demostrado"
         detalle = ("CPLEX terminó solo: no existe un despliegue mejor."
@@ -562,6 +828,34 @@ def _interpretar_status(status: str, segundos: float, limite: float | None) -> d
 
     return {"etiqueta": etiqueta, "detalle": detalle,
             "optimo": optimo, "corto_por_tiempo": corto}
+
+
+@app.get("/api/fisica/opciones")
+def fisica_opciones():
+    """Tasas, tamaños, criterios y α recomendados; y si estan los CSV del tutor."""
+    return fisica.opciones()
+
+
+@app.get("/api/fisica/resumen")
+def fisica_resumen(rate: float = fisica.POR_DEFECTO["rate_mbps"],
+                   packet_bytes: int = fisica.POR_DEFECTO["packet_bytes"],
+                   escenario: str = fisica.POR_DEFECTO["escenario"],
+                   criterio: str = fisica.POR_DEFECTO["criterio"],
+                   alfa: float = fisica.POR_DEFECTO["alfa"],
+                   carga_kbps: float = fisica.POR_DEFECTO["carga_kbps"],
+                   H: int = fisica.H_MAX,
+                   semilla: int | None = None, n: int | None = None):
+    """
+    Curva de recepcion, radios r80/r90, Γ_H, capacidad y los parametros ya
+    traducidos para M2/M3. Sin `semilla` ni `n` usa los CSV oficiales del
+    tutor; con cualquiera de los dos recalcula en vivo con su mismo codigo.
+    """
+    try:
+        return fisica.resumen(rate_mbps=rate, packet_bytes=packet_bytes, escenario=escenario,
+                              criterio=criterio, alfa=alfa, carga_kbps=carga_kbps, H=H,
+                              semilla=semilla, n_muestras=n)
+    except (KeyError, ValueError, FileNotFoundError) as e:
+        raise HTTPException(400, str(e))
 
 
 @app.get("/api/tuples/v2i")

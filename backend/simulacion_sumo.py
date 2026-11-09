@@ -18,6 +18,14 @@ import os
 import subprocess
 
 from .procesos import correr
+from . import almacen
+
+# Sube este numero si cambia lo que escribe `generar_sumocfg`: el .sumocfg
+# no entra en la clave del FCD (lleva rutas), asi que la version lo cubre.
+VERSION_CFG = 1
+# RAM de sumo por vehiculo en las rutas, medida: 3,3 GB / 50 000 vehiculos.
+# Solo para el aviso previo al lanzamiento; SUMO no se limita.
+GB_POR_VEHICULO = 3.3 / 50_000
 import xml.etree.ElementTree as ET
 
 # Tiempo máximo de la simulación SUMO. Igual que en `sumo_pipeline.py`, es una
@@ -118,7 +126,9 @@ def generar_sumocfg(output_dir: str, tiempo_simulacion: float = 100.0,
 
 def ejecutar_simulacion_sumo(output_dir: str,
                               tiempo_simulacion: float = 100.0,
-                              periodo_fcd: float = 1.0) -> tuple[str | None, str | None]:
+                              periodo_fcd: float = 1.0,
+                              semilla: int | None = None,
+                              info: dict | None = None) -> tuple[str | None, str | None]:
     """
     Ejecuta la simulación de tráfico SUMO y genera el archivo FCD.
 
@@ -135,6 +145,15 @@ def ejecutar_simulacion_sumo(output_dir: str,
     Parámetros:
         output_dir: Directorio con los archivos de red y rutas.
         tiempo_simulacion: Duración total de la simulación en segundos.
+        periodo_fcd: cada cuántos segundos se registra la posición.
+        semilla: la MISMA con la que se generaron las rutas.
+        info: dict opcional que se rellena con {"cache": bool}: True si la
+            traza salió del almacén de etapas en vez de simularse.
+
+    Reutilización: si `output_dir/claves.json` trae la clave de las rutas
+    (la escribe `ejecutar_pipeline_sumo`), la traza se busca en el almacén
+    por (rutas, duración, muestreo, semilla). Misma clave = mismo FCD, así que
+    simular otra vez sería tirar minutos.
 
     Retorna:
         (ruta_fcd, None) si fue exitoso,
@@ -150,15 +169,57 @@ def ejecutar_simulacion_sumo(output_dir: str,
     # SUMO tambien reparte el movimiento de los vehiculos entre hilos.
     # Con pocos vehiculos no compensa (el reparto cuesta mas que el
     # calculo), pero con decenas de miles es donde se va el tiempo de M2.
-    from .sumo_pipeline import _hilos
+    from .sumo_pipeline import SEMILLA_POR_DEFECTO, _ram_disponible_gb, _contar_vehiculos
+    if semilla is None:
+        semilla = SEMILLA_POR_DEFECTO
+
+    # ---- Reutilizacion de la traza ----
+    claves = almacen.claves_leer(output_dir)
+    clave_fcd = None
+    if claves.get("rutas"):
+        clave_fcd = almacen.clave("fcd", almacen.version_sumo(), claves["rutas"],
+                                  float(tiempo_simulacion), float(periodo_fcd),
+                                  int(semilla), VERSION_CFG)
+        meta = almacen.recuperar("fcd", clave_fcd, ["fcd.xml"], output_dir)
+        if meta:
+            almacen.claves_escribir(output_dir, fcd=clave_fcd)
+            if info is not None:
+                info.update({"cache": True, "guardado": meta.get("guardado")})
+            return fcd_path, None
+    # Si el archivo que hay es un enlace al almacen, hay que romperlo antes
+    # de que sumo lo sobrescriba (ver almacen.desvincular).
+    almacen.desvincular(fcd_path)
+    if info is not None:
+        info["cache"] = False
+
+    # ---- Memoria: avisar ANTES de lanzar ----
+    # Medido el 29-sep-2026: 50 000 vehiculos sobre la red de Quito (299 MB)
+    # llevaron a sumo a 3,3 GB. Con 0,9 GB libres, Windows lo pagino a disco y
+    # estuvo 8 horas sin avanzar 600 s simulados (working set de 7 MB, 100 %
+    # de CPU). No se recorta nada -SUMO hace su trabajo-, pero se dice.
+    n_veh = _contar_vehiculos(os.path.join(output_dir, "mapa.rou.xml")) or 0
+    gb_estimados = 0.3 + n_veh * GB_POR_VEHICULO
+    gb_libres = _ram_disponible_gb()
+    if gb_libres is not None:
+        aviso = "AVISO: " if gb_estimados > gb_libres else ""
+        print(f"  {aviso}sumo necesita ~{gb_estimados:.1f} GB para {n_veh:,} vehiculos; "
+              f"hay {gb_libres:.1f} GB libres"
+              + (". Si no cabe, se pagina a disco y puede quedarse HORAS sin avanzar: "
+                 "cierra programas o reduce los vehiculos." if aviso else ""), flush=True)
+
     cmd = ["sumo", "-c", os.path.basename(cfg_path),
-           "--threads", str(_hilos())]
+           # SEMILLA: sumo tiene su propio generador (inserciones, tiempos de
+           # partida, decisiones de los conductores). Aunque las rutas ya vengan
+           # fijadas por randomTrips, sin esto la traza no se repite.
+           "--seed", str(semilla)]
+    # Sin `--threads`: no reparte el bucle de la simulacion. Medido con 50 000
+    # vehiculos: el hilo principal 25 480 s de CPU, los 16 auxiliares 22 s
+    # cada uno. Solo sumaba 16 hilos ociosos y una expectativa falsa.
 
     try:
         # Ejecutar desde output_dir: el .sumocfg referencia sus archivos
         # con rutas relativas.
-        resultado = correr(cmd, timeout=_timeout_sim(), cwd=output_dir,
-                           etiqueta="sumo")
+        correr(cmd, timeout=_timeout_sim(), cwd=output_dir, etiqueta="sumo")
     except FileNotFoundError:
         return None, (
             "No se encontró el ejecutable 'sumo'. "
@@ -187,6 +248,12 @@ def ejecutar_simulacion_sumo(output_dir: str,
             "- El tiempo de simulación es demasiado corto\n"
             "- No hay vehículos activos en la simulación"
         )
+
+    if clave_fcd:
+        almacen.guardar("fcd", clave_fcd, output_dir, ["fcd.xml"],
+                        {"rutas": claves["rutas"], "tiempo_simulacion": tiempo_simulacion,
+                         "periodo_fcd": periodo_fcd, "semilla": semilla})
+        almacen.claves_escribir(output_dir, fcd=clave_fcd)
 
     return fcd_path, None
 

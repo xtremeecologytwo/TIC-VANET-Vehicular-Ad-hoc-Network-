@@ -82,6 +82,39 @@ export interface AppState {
   bounds: [LatLon, LatLon] | null;
 }
 
+/* ---- Capa física (notas del tutor, IEEE 802.11p) ---- */
+/** Qué configuración física produjo un radio o unas penalizaciones (va al manifest). */
+export interface FisicaEtiqueta {
+  rate_mbps: number; packet_bytes: number; escenario: string; criterio: string;
+  alfa: number; fuente: string; resumen: string;
+}
+export interface FisicaOpciones {
+  tasas_mbps: number[]; tamanos_bytes: number[]; criterios: string[]; escenarios: string[];
+  alfa: Record<string, number>;
+  por_defecto: { rate_mbps: number; packet_bytes: number; escenario: string; criterio: string; alfa: number; carga_kbps: number };
+  h_max: number; tutor_csv: boolean; semilla_tutor: number; muestras_tutor: number;
+}
+export interface FisicaQuery {
+  rate: number; packet_bytes: number; escenario: string; criterio: string; alfa: number;
+  carga_kbps: number; H: number; semilla: number | null; n: number | null;
+}
+export interface FisicaResumen {
+  rate_mbps: number; packet_bytes: number; escenario: string; criterio: string; alfa: number;
+  carga_kbps: number; H: number;
+  fuente: { alcance: string; multisalto: string };
+  radios: { sensitivity_radius_m: number | null; r80_m: number | null; r90_m: number | null };
+  radio_elegido_m: number;
+  curva: { distance_m: number; success_probability: number }[];
+  multisalto: {
+    n_hops: number; max_hop_distance_m: number | null; success_probability: number | null;
+    route_per: number | null; penalty_factor: number | null;
+    expected_extra_retransmissions: number | null; mean_hop_distance_m: number | null;
+  }[];
+  capacidad: { t_data_us: number; t_ack_us: number; t0_us: number; c0_mbps: number; c1_mbps: number; eta1: number; c_agg_mbps: number; alfa: number };
+  modelo: { radio_obu_m: number; P_gamma: number[]; P_extra: number[]; cap_kbps: number; carga_kbps: number };
+  etiqueta: string;
+}
+
 async function req<T>(url: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json" },
@@ -103,11 +136,14 @@ export const api = {
     req<ScenarioResult>("/api/scenario/generate", { method: "POST", body: JSON.stringify(body) }),
   filterRsu: (body: { min_grado: number; radio_cluster: number }) =>
     req<RsuResult>("/api/rsu/filter", { method: "POST", body: JSON.stringify(body) }),
-  simulate: (body: { radio_obu: number; step_min: number; bidireccional: boolean }) =>
+  simulate: (body: { radio_obu: number; step_min: number; bidireccional: boolean; fisica?: FisicaEtiqueta | null }) =>
     req<SimResult>("/api/simulate", { method: "POST", body: JSON.stringify(body) }),
   optimize: (body: {
     H: number; max_rsu: number | null; limite_tiempo: number | null;
     lexicografico: boolean;
+    /** Capa física (opcional): P[1..H], Cap y L en kb/s, y su etiqueta. */
+    penalizaciones?: number[] | null; cap_kbps?: number | null; carga_kbps?: number | null;
+    fisica?: FisicaEtiqueta | null;
   }) =>
     req<OptResult>("/api/optimize", { method: "POST", body: JSON.stringify(body) }),
   timesteps: () => req<{ timesteps: number[] }>("/api/timesteps"),
@@ -115,4 +151,10 @@ export const api = {
   tuplesV2i: (limit = 500) => req<{ total: number; tuplas: V2iTuple[] }>(`/api/tuples/v2i?limit=${limit}`),
   tuplesV2v: (limit = 500) => req<{ total: number; tuplas: V2vTuple[] }>(`/api/tuples/v2v?limit=${limit}`),
   multihop: (t: number, H: number) => req<Multihop>(`/api/multihop?t=${t}&H=${H}`),
+  fisicaOpciones: () => req<FisicaOpciones>("/api/fisica/opciones"),
+  fisicaResumen: (q: FisicaQuery) => {
+    const qs = new URLSearchParams();
+    Object.entries(q).forEach(([k, v]) => { if (v !== null && v !== undefined) qs.set(k, String(v)); });
+    return req<FisicaResumen>(`/api/fisica/resumen?${qs.toString()}`);
+  },
 };

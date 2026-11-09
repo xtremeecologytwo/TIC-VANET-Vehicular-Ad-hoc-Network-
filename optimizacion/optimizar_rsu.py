@@ -226,18 +226,57 @@ def construir_modelo(datos: dict, lexicografico: bool = True):
     return mdl, Sel, Rts
 
 
+# Reparto del tope de tiempo entre los tres niveles del lexicografico.
+#   nivel 1 (cobertura): facil -con capacidad holgada basta encender todo-.
+#   nivel 2 (n de RSU) : el dificil, un cubrimiento de conjuntos (NP-duro).
+#   nivel 3 (saltos)   : con las antenas ya acotadas, el espacio es pequeno.
+# Con 5400 s (1 h 30, la regla del tutor): 900 / 3600 / 900 s.
+FRACCIONES_NIVEL = (1 / 6, 4 / 6, 1 / 6)
+
+# Con un número máximo de RSU (MaxR) que APRIETA, el difícil pasa a ser el
+# nivel 1: elegir las k antenas que más cobertura dan (máxima cobertura,
+# NP-duro). Medido con 5000 vehículos, 6 Mb/s r80, H = 3 y MaxR = 60: con
+# 600 s en el nivel 1 terminó con óptimo (395 s); con 150 s quedó cortado.
+FRACCIONES_NIVEL_LIMITADO = (4 / 6, 1 / 6, 1 / 6)
+
+
+def repartir_tope(limite_tiempo: float | None,
+                  fracciones=FRACCIONES_NIVEL) -> list[float] | None:
+    """Tope total -> topes por nivel (s), en proporción a `fracciones`. None = sin tope."""
+    if limite_tiempo is None:
+        return None
+    total = float(sum(fracciones))
+    return [round(float(limite_tiempo) * f / total, 1) for f in fracciones]
+
+
 def optimizar(datos: dict, mostrar_log: bool = False,
               limite_tiempo: float | None = None,
-              lexicografico: bool = True) -> dict:
+              lexicografico: bool = True,
+              topes_por_nivel: list[float] | None = None,
+              hilos: int | None = None,
+              memoria_mb: float | None = None) -> dict:
     """
     Construye y resuelve el modelo con docplex/CPLEX.
 
     Parámetros:
         datos: dict de datos (de construir_datos_opl / exportar_dat).
         mostrar_log: si True, imprime el log del motor CPLEX.
-        limite_tiempo: límite de tiempo en segundos (None = sin límite).
+        limite_tiempo: límite de tiempo TOTAL en segundos (None = sin límite).
+            En modo lexicográfico se reparte entre los tres niveles
+            (FRACCIONES_NIVEL), porque un tope GLOBAL hace que CPLEX
+            multi-objetivo que no termina devuelva NINGUNA solución
+            ("multi-objective stopped"). Con tope por nivel, al agotarse un
+            nivel CPLEX pasa al siguiente con lo mejor que tenía y al final
+            devuelve la mejor solución hallada ("multi-objective non-optimal").
         lexicografico: resolver con prioridades (cobertura antes que nº de RSU)
                        en vez de con la suma ponderada. Ver `construir_modelo`.
+        topes_por_nivel: [s1, s2, s3] explícitos; prevalece sobre limite_tiempo.
+        hilos: núcleos que puede usar CPLEX (None = todos). Al resolver varios
+               puntos a la vez, cada proceso recibe su parte.
+        memoria_mb: memoria de trabajo de CPLEX (parámetro `workmem`). Al
+               superarla, los nodos del árbol se guardan COMPRIMIDOS EN DISCO
+               en vez de seguir creciendo en RAM: así un solve largo no lleva a
+               Windows a paginar (lo que dejó 8 h colgada la prueba de 50000).
 
     Retorna:
         dict:
@@ -258,8 +297,22 @@ def optimizar(datos: dict, mostrar_log: bool = False,
     """
     mdl, Sel, Rts = construir_modelo(datos, lexicografico=lexicografico)
 
-    if limite_tiempo is not None:
-        mdl.set_time_limit(limite_tiempo)
+    kw_solve = {}
+    if lexicografico:
+        topes = topes_por_nivel if topes_por_nivel is not None else repartir_tope(limite_tiempo)
+        if topes is not None:
+            kw_solve["parameter_sets"] = mdl.build_multiobj_paramsets(timelimits=list(topes))
+    else:
+        topes = None
+        if limite_tiempo is not None:
+            mdl.set_time_limit(limite_tiempo)
+    if hilos:
+        mdl.parameters.threads = int(hilos)
+    if memoria_mb:
+        import tempfile
+        mdl.parameters.workmem = float(memoria_mb)
+        mdl.parameters.mip.strategy.file = 3          # nodos de más: a disco, comprimidos
+        mdl.parameters.workdir = tempfile.gettempdir()
 
     # La edición COMMUNITY de CPLEX limita a 1000 variables/restricciones.
     # El problema real (miles de tuplas CVR) la supera: hay que usar el motor
@@ -271,7 +324,7 @@ def optimizar(datos: dict, mostrar_log: bool = False,
         DOcplexLimitsExceeded = ()
 
     try:
-        sol = mdl.solve(log_output=mostrar_log)
+        sol = mdl.solve(log_output=mostrar_log, **kw_solve)
     except DOcplexLimitsExceeded as e:
         n_v = mdl.number_of_variables
         n_c = mdl.number_of_constraints
@@ -291,15 +344,20 @@ def optimizar(datos: dict, mostrar_log: bool = False,
         }
 
     if sol is None:
+        status = mdl.solve_details.status if mdl.solve_details else "sin solución"
+        segundos = mdl.solve_details.time if mdl.solve_details else None
         return {
             "objetivo": None,
             "seleccionados": [],
             "seleccionados_backend": [],
-            "status": mdl.solve_details.status if mdl.solve_details else "sin solución",
+            "status": status,
             "n_rsu_elegidos": 0,
-            "segundos_solver": mdl.solve_details.time if mdl.solve_details else None,
+            "segundos_solver": segundos,
             "reparto": None,
             "objetivos": None,
+            "topes_por_nivel": topes,
+            "sin_solucion": True,
+            "interrumpido": _fue_interrumpido(status, segundos, topes),
         }
 
     rInf = datos["rInf"]
@@ -357,6 +415,17 @@ def optimizar(datos: dict, mostrar_log: bool = False,
         except Exception:
             objetivos = None
 
+    # Nivel 1 cortado antes de encontrar algo mejor que la solución trivial
+    # (todo en r_inf): los niveles 2 y 3 respetan esa "cobertura" de 0 y bajan
+    # las antenas a 0. CPLEX lo llama "non-optimal" como cualquier corte por
+    # tiempo, pero no es un despliegue: no hay nada servido habiendo enlaces.
+    hay_enlaces = any(t[3] != rInf for t in datos["CVR"])
+    status = mdl.solve_details.status
+    nivel1_vacio = bool(lexicografico and hay_enlaces and reparto["conectados"] <= 1e-9
+                        and "non-optimal" in (status or "").lower())
+    if nivel1_vacio:
+        status = f"{status} [nivel 1 sin cobertura: sube el tope]"
+
     # Mapa entero_OPL -> id_backend para reportar RSU reales
     int_a_rsu = datos.get("mapas", {}).get("int_a_rsu", {})
     seleccionados_backend = [int_a_rsu.get(r, r) for r in seleccionados]
@@ -372,11 +441,47 @@ def optimizar(datos: dict, mostrar_log: bool = False,
         "objetivos": objetivos,
         "seleccionados": seleccionados,
         "seleccionados_backend": seleccionados_backend,
-        "status": mdl.solve_details.status,
+        "status": status,
         "n_rsu_elegidos": len(seleccionados),
         "segundos_solver": mdl.solve_details.time,
         "reparto": reparto,
+        "topes_por_nivel": topes,
+        "sin_solucion": nivel1_vacio,
+        "interrumpido": _fue_interrumpido(status, mdl.solve_details.time, topes),
     }
+
+
+def _fue_interrumpido(status: str, segundos, topes) -> bool:
+    """
+    ¿Se cortó el solve por Ctrl+C (o un aborto) y NO por el tope de tiempo?
+
+    La API de CPLEX instala su propio manejador de Ctrl+C durante el solve:
+    aborta y devuelve con normalidad, sin KeyboardInterrupt. Con topes POR
+    NIVEL, agotar el tiempo da "non-optimal" (con la mejor solución); un
+    "stopped"/"aborted" solo aparece por interrupción o fallo. Si además se
+    consumió claramente menos tiempo que los topes, fue una interrupción.
+    """
+    s = (status or "").lower()
+    if not ("stopped" in s or "abort" in s):
+        return False
+    if not topes or segundos is None:
+        return True
+    return float(segundos) < 0.95 * sum(float(t) for t in topes)
+
+
+def estado_solver(status: str) -> dict:
+    """
+    {"optimo": bool, "cortado": bool} a partir del status de CPLEX.
+
+    Ojo: "multi-objective non-optimal" CONTIENE "optimal"; hay que excluirlo
+    explícitamente o se reporta como óptimo una solución cortada por tiempo.
+    """
+    s = (status or "").lower()
+    sin_util = "sin cobertura" in s
+    cortado = ("non-optimal" in s or "time limit" in s or "stopped" in s
+               or "aborted" in s) and not sin_util
+    optimo = ("optimal" in s) and not cortado and not sin_util
+    return {"optimo": optimo, "cortado": cortado, "sin_solucion_util": sin_util}
 
 
 # ============================================================

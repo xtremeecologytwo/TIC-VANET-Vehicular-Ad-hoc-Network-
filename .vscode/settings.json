@@ -1,0 +1,7 @@
+{
+  // Las terminales nuevas se abren SIEMPRE en la raíz del repo. `uvicorn
+  // api.main:app` y `scn.py` solo funcionan desde aquí: lanzados desde
+  // backend/ fallan con "No module named 'api'" (pasó tres veces).
+  "terminal.integrated.cwd": "${workspaceFolder}",
+  "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+}

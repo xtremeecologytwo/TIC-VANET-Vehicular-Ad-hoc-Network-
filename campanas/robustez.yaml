@@ -1,0 +1,24 @@
+# ============================================================================
+# Robustez a la semilla: ¿las conclusiones de fisica_v1 dependen del tráfico?
+# ============================================================================
+# Esta campaña repite un subconjunto pequeño de fisica_v1 con otra semilla.
+# Ya no hace falta para las barras de error: fisica_v1, trafico_v1 y
+# presupuesto_v1 tienen ahora `semillas` (10, diseño completo) y
+# `scn.py reporte --campana X --semillas` da la media y el IC 95 %. Para
+# repetir ESTE subconjunto con varias semillas, basta cambiar `semilla: 1` por
+# `semillas: [1, 2, 3]` y `nombre` por `robustez`.
+# ============================================================================
+
+nombre: robustez_s1
+descripcion: Subconjunto de fisica_v1 repetido con otra semilla.
+area: centro
+semilla: 1
+duracion_min: 60
+muestreo_min: 5
+tope_m3_s: 5400
+
+factores:
+  vehiculos: [2500]
+  fisica: ["3:r80", "6:r90", "12:r90"]
+  H: [1, 3]
+  filtrado: [C]

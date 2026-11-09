@@ -59,9 +59,19 @@ def leer_dat(ruta):
     a `optimizar()`. Así este script didáctico usa exactamente el mismo camino
     de resolución que la aplicación.
     """
-    txt = open(ruta, encoding="utf-8").read()
+    crudo = open(ruta, encoding="utf-8").read()
+
+    # La cabecera del .dat (un comentario /* ... */) lleva la trazabilidad:
+    # a que instante corresponde cada escenario y a que junction cada RSU. Se
+    # extrae ANTES de borrar los comentarios; si no, se perderia y el dict
+    # reconstruido no seria igual al que produce construir_datos_opl().
+    escenario_a_t = {int(s_): float(t_) for s_, t_ in
+                     re.findall(r"escenario\s+(\d+)\s*->\s*t\s*=\s*([\d.]+)", crudo)}
+    int_a_rsu = {int(n_): id_ for n_, id_ in
+                 re.findall(r"R(\d+)\s*->\s*(\S+)", crudo)}
+
     # quitar comentarios /* ... */ y // ...
-    txt = re.sub(r"/\*.*?\*/", "", txt, flags=re.S)
+    txt = re.sub(r"/\*.*?\*/", "", crudo, flags=re.S)
     txt = re.sub(r"//.*", "", txt)
 
     def escalar(nombre, defecto=None):
@@ -116,6 +126,10 @@ def leer_dat(ruta):
         for s, interior in re.findall(r"(\d+)\s*:\s*#\[([^\]]*)\]#", mL.group(1)):
             datos["L"][int(s)] = {int(v): float(c) for v, c in
                                   re.findall(r"(\d+)\s*:\s*([\d.]+)", interior)}
+
+    # Solo se incluye lo que de verdad se encontro: un .dat escrito a mano no
+    # tiene cabecera, y en ese caso `mapas` queda con los diccionarios vacios.
+    datos["mapas"] = {"escenario_a_t": escenario_a_t, "int_a_rsu": int_a_rsu}
 
     return datos
 

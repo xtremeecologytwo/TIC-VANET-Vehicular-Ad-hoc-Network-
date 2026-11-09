@@ -1,0 +1,64 @@
+# ============================================================================
+# Campaña trafico_v1 — ¿cuánta carga por vehículo hace falta para que la
+# capacidad de las RSU obligue a desplegar más?
+# ============================================================================
+# Uso:
+#   python scn.py campana campanas/trafico_v1.yaml --plan
+#   python scn.py campana campanas/trafico_v1.yaml --paralelo auto
+#   python scn.py reporte --campana trafico_v1 --semillas
+# (o las tres campañas juntas, semilla a semilla: ver fisica_v1.yaml)
+#
+# Diseño: factorial completo 2 x 6 x 3 x 2 x 4 = 288 puntos, repetido con las
+# 10 semillas de fisica_v1 (2880 corridas); con cada semilla las simulaciones
+# salen del almacén de fisica_v1, sin repetir SUMO. Medido con la semilla 42:
+# unas 7 h 45 por semilla con --paralelo auto.
+#
+# Por qué estos niveles (de los datos de fisica_v1)
+# -------------------------------------------------
+# Con 80 kb/s por vehículo la capacidad de una RSU (Ec. 4) casi nunca limita:
+# el uso medio fue de 0,3-3,6 % con 1000 vehículos, 1-11 % con 2500 y 3-34 %
+# con 5000, y solo recortó la cobertura a 3 Mb/s con 2500-5000 vehículos y el
+# filtrado C. Empieza a mandar hacia un 25-30 % de uso medio (en los picos
+# algunas antenas ya están llenas). Multiplicar la carga x2, x3, x4 lleva a
+# 2500 y 5000 vehículos a esa zona en las seis configuraciones físicas; con
+# 1000 vehículos harían falta x10 o más, por eso no se incluye.
+#   x1 es el control: el mismo problema que fisica_v1 pero con el tope de 3 h.
+#
+# Qué se espera ver: las RSU suben con la carga hasta encender todas las
+# candidatas alcanzables (Y); a partir de ahí lo que cae es la cobertura. El
+# multisalto debería bajar: cada salto consume capacidad (P[h] = Gamma_h > 1).
+# ============================================================================
+
+nombre: trafico_v1
+descripcion: >
+  Efecto de la carga por vehículo (x1 a x4 de 80 kb/s) sobre el número de RSU,
+  la cobertura, el uso de la capacidad y el multisalto, para cada configuración
+  física de 802.11p, con 2500 y 5000 vehículos.
+
+area: centro
+semillas: [42, 1, 2, 3, 4, 5, 6, 7, 8, 9]   # trafico_v1_s42, ...; la 42 reutiliza la primera tanda
+duracion_min: 60
+muestreo_min: 5
+
+# Tope de M3 por punto: 3 h. Sin límite de RSU el nivel difícil es el 2 (el
+# mínimo de antenas), así que se reparte 30 min / 2 h / 30 min.
+tope_m3_s: 10800
+reparto_tope: [1, 4, 1]
+
+fisica_base:                       # igual que fisica_v1 (comparabilidad)
+  paquete_bytes: 1000
+  escenario: with_interference
+  alfa: 0.80
+  carga_kbps: 80                   # x1; el factor `carga` la multiplica
+  p_h: gamma
+
+factores:
+  vehiculos: [2500, 5000]
+  fisica: ["3:r80", "3:r90", "6:r80", "6:r90", "12:r80", "12:r90"]
+  H: [1, 2, 3]
+  filtrado: [C, A]
+  carga: [1, 2, 3, 4]              # 80, 160, 240, 320 kb/s por vehículo
+
+filtrados:
+  A: {gmin: 3, rho: 15}
+  C: {gmin: 4, rho: 20}

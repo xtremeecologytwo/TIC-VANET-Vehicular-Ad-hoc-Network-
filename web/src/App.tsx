@@ -1,8 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
 import ScenarioMap from "./components/ScenarioMap";
 import ResultsTabs from "./components/ResultsTabs";
+import CapaFisica from "./components/CapaFisica";
+import type { ModeloFisico } from "./components/CapaFisica";
 import { api } from "./api/client";
-import type { BBox, LatLon, Rsu, ConnFrame } from "./api/client";
+import type { BBox, LatLon, Rsu, ConnFrame, FisicaEtiqueta } from "./api/client";
 import "./App.css";
 
 /* ---------- componentes de UI ---------- */
@@ -117,7 +119,7 @@ const PRESETS = [
   { id: "medio",  nombre: "Medio",   num_vehiculos: 5000,  tiempo_min: 120, step_min: 5,
     pista: "Escenario de trabajo; la optimización aún cierra." },
   { id: "denso",  nombre: "Denso",   num_vehiculos: 50000, tiempo_min: 180, step_min: 10,
-    pista: "Carga alta. Medido en esta red, 50 000 vehículos la saturan (viajes de ~69 min de media) y M2/M3 se van a horas." },
+    pista: "Carga alta. SUMO necesita ~3,3 GB de RAM libre para 50 000 vehículos (medido); con menos se pagina y se congela (8 h sin avanzar). M2/M3 se van a horas: mejor desde el CLI." },
 ] as const;
 
 export default function App() {
@@ -149,6 +151,11 @@ export default function App() {
   const [tope, setTope] = useState(60);
   // Multi-objetivo lexicográfico de CPLEX: cobertura primero, RSU después.
   const [lexOn, setLexOn] = useState(true);
+  // Capa física (notas del tutor): lo que está APLICADO. Null = valores
+  // clásicos (radio del slider, P[h] = h, Cap = 300, L = 10). Se guarda la
+  // etiqueta para que el manifest de la corrida diga de dónde salió cada número.
+  const [fisicaRadio, setFisicaRadio] = useState<FisicaEtiqueta | null>(null);
+  const [fisicaModelo, setFisicaModelo] = useState<ModeloFisico | null>(null);
 
   const set = (k: keyof typeof DEF) => (v: number) => setP((s) => ({ ...s, [k]: v }));
 
@@ -208,7 +215,8 @@ export default function App() {
   });
 
   const simular = () => run("Simulando conectividad", async () => {
-    const r = await api.simulate({ radio_obu: p.radio_obu, step_min: p.step_min, bidireccional: true });
+    const r = await api.simulate({ radio_obu: p.radio_obu, step_min: p.step_min, bidireccional: true,
+      fisica: fisicaRadio });
     setKpis((k) => ({
       ...k, "Tuplas V2I": r.v2i.total_tuplas, Snapshots: r.v2i.total_timesteps,
       "Tuplas V2V": r.v2v.total_tuplas, Vehículos: r.v2v.n_vehiculos,
@@ -223,6 +231,12 @@ export default function App() {
       max_rsu: maxRsuOn ? maxRsu : null,
       limite_tiempo: topeOn ? tope : null,
       lexicografico: lexOn,
+      // Capa física: P[1..H] (Γ_h) y Cap/L en kb/s si se aplicaron; si no,
+      // null y el backend usa los valores de siempre.
+      penalizaciones: fisicaModelo ? fisicaModelo.P.slice(0, p.H) : null,
+      cap_kbps: fisicaModelo?.cap_kbps ?? null,
+      carga_kbps: fisicaModelo?.carga_kbps ?? null,
+      fisica: fisicaModelo?.etiqueta ?? null,
     });
     setCandidatas(r.candidatas); setDesplegadas(r.desplegadas);
     const s = r.solver;
@@ -393,12 +407,20 @@ export default function App() {
             )}
 
             <div className="grouplabel">M2 · Conectividad</div>
-            <Slider label="Radio OBU" value={p.radio_obu} min={50} max={500} step={25} unit=" m" onChange={set("radio_obu")} />
+            {/* Paso de 5 m y mínimo 10 m para poder recibir r80/r90 de la capa física. */}
+            <Slider label="Radio OBU" value={p.radio_obu} min={10} max={500} step={5} unit=" m" onChange={set("radio_obu")} />
+            {fisicaRadio && <p className="hint">radio de la capa física: {fisicaRadio.resumen}</p>}
             <Slider label="Muestreo" value={p.step_min} min={1} max={30} unit=" min" onChange={set("step_min")} />
             <button className="cta ghost" disabled={!!busy || !candidatas} onClick={simular}>Simular conectividad</button>
 
             <div className="grouplabel">M3 · Optimización</div>
             <Slider label="Saltos H" value={p.H} min={1} max={6} onChange={set("H")} />
+            {fisicaModelo && (
+              <p className="hint">
+                P[h] = {fisicaModelo.P.slice(0, p.H).map((x) => x.toFixed(3)).join(" / ")} ·
+                Cap {fisicaModelo.cap_kbps.toFixed(0)} kb/s · L {fisicaModelo.carga_kbps} kb/s
+              </p>
+            )}
             <label className="chk">
               <input type="checkbox" checked={maxRsuOn}
                 onChange={(e) => setMaxRsuOn(e.target.checked)} />
@@ -444,6 +466,28 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* CAPA FÍSICA — de dónde salen el radio, P[h] y la capacidad */}
+      <div className="section-h"><span className="k">Capa física · IEEE 802.11p</span><span className="rule" /></div>
+      <CapaFisica H={p.H} busy={!!busy}
+        aplicado={{ radio: fisicaRadio, modelo: fisicaModelo }}
+        onAplicarRadio={(r, et) => {
+          setP((s) => ({ ...s, radio_obu: r }));
+          setFisicaRadio(et);
+          setKpis((k) => ({ ...k, "Radio OBU": { value: `${r} m`, sub: et.resumen } }));
+        }}
+        onAplicarModelo={(m) => {
+          setFisicaModelo(m);
+          setKpis((k) => ({ ...k, "P[h] · Cap": {
+            value: m.P.slice(0, p.H).map((x) => x.toFixed(2)).join(" / "),
+            sub: `Γ_h de ${m.etiqueta.resumen} · Cap ${m.cap_kbps.toFixed(0)} kb/s · L ${m.carga_kbps} kb/s`,
+          } }));
+        }}
+        onQuitar={() => {
+          setFisicaRadio(null); setFisicaModelo(null);
+          setP((s) => ({ ...s, radio_obu: DEF.radio_obu }));
+          setKpis((k) => { const { "Radio OBU": _a, "P[h] · Cap": _b, ...resto } = k; return resto; });
+        }} />
 
       {/* KPIs */}
       {kpiEntries.length > 0 && (

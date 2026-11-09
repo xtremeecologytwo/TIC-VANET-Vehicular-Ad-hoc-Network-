@@ -16,7 +16,7 @@ $root = $PSScriptRoot
 
 # 1) Backend — usa el Python del entorno virtual del repo
 Start-Process powershell -ArgumentList '-NoExit', '-Command',
-  "cd '$root'; Write-Host 'API FastAPI en http://localhost:8000' -ForegroundColor Cyan; .\.venv\Scripts\python -m uvicorn api.main:app --reload --port 8000"
+  "cd '$root'; Write-Host 'API FastAPI en http://localhost:8000' -ForegroundColor Cyan; .\.venv\Scripts\python -m uvicorn api.main:app --reload --port 8000 --timeout-graceful-shutdown 5"
 
 # 2) Frontend — servidor de desarrollo de Vite
 Start-Process powershell -ArgumentList '-NoExit', '-Command',

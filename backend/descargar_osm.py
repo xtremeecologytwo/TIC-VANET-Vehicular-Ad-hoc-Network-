@@ -44,6 +44,7 @@ función devuelve exactamente eso.
 """
 
 import hashlib
+import subprocess
 import json
 import os
 import queue
@@ -99,6 +100,10 @@ REINTENTOS = int(os.environ.get("OVERPASS_REINTENTOS", 3))
 # misma consulta pesada a los cuatro seria abusar.
 CARRERA = int(os.environ.get("OVERPASS_CARRERA", 2))
 ESPERA_ENTRE_RONDAS = float(os.environ.get("OVERPASS_ESPERA_S", 20))
+# Presupuesto de tiempo de UNA descarga entera (vias + edificios, con todas
+# sus rondas y trozos). Sin el, el troceo recursivo de los edificios podia
+# reintentar durante horas con Overpass caido -y ese hilo no se interrumpe-.
+PRESUPUESTO_S = float(os.environ.get("OVERPASS_PRESUPUESTO_S", 900))
 # Memoria máxima que se le pide al servidor, en bytes (1 GB).
 OVERPASS_MAXSIZE = int(os.environ.get("OVERPASS_MAXSIZE", 1073741824))
 # Cuántas veces se puede partir un cuadrante que falla (4^N cuadrantes finales).
@@ -155,7 +160,7 @@ def _es_vacio(contenido: bytes) -> bool:
     return len(contenido) < 2000 or b"<way" not in contenido
 
 
-def _pedir_a(url: str, query: str) -> tuple[bytes | None, str]:
+def _pedir_a(url: str, query: str, tope: float | None = None) -> tuple[bytes | None, str]:
     """
     Lanza la consulta a UN servidor.
 
@@ -164,10 +169,10 @@ def _pedir_a(url: str, query: str) -> tuple[bytes | None, str]:
     dentro, y las instancias regionales devuelven 200 con un documento vacio.
     """
     try:
-        r = requests.post(url, data={"data": query}, headers=HEADERS,
-                          timeout=HTTP_TIMEOUT_S)
+        tope = HTTP_TIMEOUT_S if tope is None else max(1.0, min(tope, HTTP_TIMEOUT_S))
+        r = requests.post(url, data={"data": query}, headers=HEADERS, timeout=tope)
     except requests.exceptions.Timeout:
-        return None, f"tiempo de espera agotado ({HTTP_TIMEOUT_S}s)"
+        return None, f"tiempo de espera agotado ({tope:.0f}s)"
     except requests.exceptions.ConnectionError:
         return None, "error de conexion (hay acceso a internet?)"
     except requests.exceptions.RequestException as e:
@@ -188,7 +193,52 @@ def _pedir_a(url: str, query: str) -> tuple[bytes | None, str]:
     return None, f"HTTP {r.status_code}"
 
 
-def _carrera(urls: list[str], query: str) -> tuple[bytes | None, str]:
+# ---- Cancelacion ----
+# Una descarga captura la generacion al empezar; `abortar()` la incrementa.
+# Cada espera comprueba si su generacion sigue vigente y, si no, vuelve. Es
+# un contador y no un booleano para que un escenario nuevo pueda abortar el
+# anterior sin que el flag le afecte a el mismo.
+_GENERACION = 0
+
+
+def abortar() -> None:
+    """Cancela toda descarga en curso (nuevo escenario, o cierre de la API)."""
+    global _GENERACION
+    _GENERACION += 1
+
+
+def _cancelada(gen: int | None) -> bool:
+    return gen is not None and gen != _GENERACION
+
+
+def _esperar(segundos: float, gen: int | None) -> bool:
+    """Duerme a trozos de 1 s; devuelve True si la descarga fue cancelada."""
+    fin = time.perf_counter() + segundos
+    while time.perf_counter() < fin:
+        if _cancelada(gen):
+            return True
+        time.sleep(min(1.0, fin - time.perf_counter()))
+    return _cancelada(gen)
+
+
+def _host(url: str) -> str:
+    """'overpass-api.de' a partir de la URL completa, para los mensajes."""
+    return url.split("//", 1)[-1].split("/", 1)[0]
+
+
+def _avisar(texto: str) -> None:
+    """
+    Escribe en la consola del backend lo que esta haciendo la descarga.
+
+    Es la unica ventana que tiene el usuario mientras Overpass no contesta: la
+    peticion HTTP de la interfaz sigue abierta y no puede informar de nada.
+    Sin esto, tres rondas de reintentos son trece minutos de reloj de arena.
+    """
+    print(f"  [overpass] {texto}", flush=True)
+
+
+def _carrera(urls: list[str], query: str,
+             tope: float | None = None, gen: int | None = None) -> tuple[bytes | None, str]:
     """
     Manda la consulta a varios servidores a la vez y devuelve la PRIMERA
     respuesta con datos.
@@ -199,29 +249,50 @@ def _carrera(urls: list[str], query: str) -> tuple[bytes | None, str]:
     todos: si uno contesta en 20 s y otro esta colgado, se devuelve a los 20 s.
     """
     buzon: queue.Queue = queue.Queue()
+    t0 = time.perf_counter()
+    # El tope por peticion nunca supera HTTP_TIMEOUT_S aunque quede mas
+    # presupuesto: es lo que aplica _pedir_a, y lo que se imprime.
+    tope = HTTP_TIMEOUT_S if tope is None else max(1.0, min(tope, HTTP_TIMEOUT_S))
 
     def trabajo(u: str) -> None:
         try:
-            buzon.put(_pedir_a(u, query))
+            contenido, m = _pedir_a(u, query, tope)
         except Exception as e:                      # nunca dejar el buzon vacio
-            buzon.put((None, f"error inesperado: {type(e).__name__}"))
+            contenido, m = None, f"error inesperado: {type(e).__name__}"
+        buzon.put((contenido, m, u, time.perf_counter() - t0))
 
+    _avisar("pidiendo a " + " y ".join(_host(u) for u in urls)
+            + f" (tope {tope:.0f} s cada uno)")
     for u in urls:
         threading.Thread(target=trabajo, args=(u,), daemon=True).start()
 
     motivo = "ningun servidor respondio"
-    for _ in urls:
-        try:
-            contenido, m = buzon.get(timeout=HTTP_TIMEOUT_S + 15)
-        except queue.Empty:
+    pendientes = len(urls)
+    limite = time.perf_counter() + tope + 15
+    # Sondeo de 1 s en vez de un get bloqueante: asi Ctrl+C o un escenario
+    # nuevo pueden cortar la espera. Los hilos HTTP siguen hasta su tope,
+    # pero son daemon y nadie los espera.
+    while pendientes:
+        if _cancelada(gen):
+            return None, "descarga cancelada"
+        if time.perf_counter() > limite:
+            _avisar("ninguno contesto dentro del tope")
             break
+        try:
+            contenido, m, u, dt = buzon.get(timeout=1.0)
+        except queue.Empty:
+            continue
+        pendientes -= 1
         if contenido is not None:
+            _avisar(f"{_host(u)} respondio en {dt:.0f} s ({len(contenido) / 1e6:.1f} MB)")
             return contenido, ""
+        _avisar(f"{_host(u)}: {m} ({dt:.0f} s)")
         motivo = m
     return None, motivo
 
 
-def _consultar(cuerpo: str) -> tuple[bytes | None, str]:
+def _consultar(cuerpo: str, plazo: float | None = None,
+               gen: int | None = None) -> tuple[bytes | None, str]:
     """
     Ejecuta un cuerpo de consulta Overpass, en carrera entre servidores.
 
@@ -248,21 +319,42 @@ def _consultar(cuerpo: str) -> tuple[bytes | None, str]:
 
     motivo = "no se pudo contactar con ningun servidor de Overpass"
 
+    def restante() -> float | None:
+        return None if plazo is None else plazo - time.time()
+
     for ronda in range(REINTENTOS):
         if ronda:
-            time.sleep(ESPERA_ENTRE_RONDAS)
+            r = restante()
+            if r is not None and r < ESPERA_ENTRE_RONDAS + 5:
+                _avisar("presupuesto de tiempo agotado: no se reintenta mas")
+                return None, "presupuesto de tiempo agotado"
+            _avisar(f"todos los servidores fallaron; ronda {ronda + 1}/{REINTENTOS} "
+                    f"en {ESPERA_ENTRE_RONDAS:.0f} s (suele ser transitorio)")
+            if _esperar(ESPERA_ENTRE_RONDAS, gen):
+                return None, "descarga cancelada"
         for i in range(0, len(OVERPASS_URLS), CARRERA):
+            if _cancelada(gen):
+                return None, "descarga cancelada"
+            r = restante()
+            if r is not None and r < 5:
+                _avisar("presupuesto de tiempo agotado: no se reintenta mas")
+                return None, "presupuesto de tiempo agotado"
             grupo = OVERPASS_URLS[i:i + CARRERA]
-            contenido, m = _carrera(grupo, query)
+            contenido, m = _carrera(grupo, query, tope=r, gen=gen)
             if contenido is not None:
                 return contenido, ""
             motivo = m
 
+    _avisar(f"sin exito tras {REINTENTOS} rondas: {motivo}. Con Overpass saturado "
+            f"ayuda subir OVERPASS_HTTP_TIMEOUT_S (hoy {HTTP_TIMEOUT_S}) o elegir un "
+            f"area menor")
     return None, motivo
 
 
 def _descargar_edificios(bbox: tuple[float, float, float, float], output_dir: str,
-                         prefijo: str, profundidad: int = 0) -> tuple[list[str], list[str]]:
+                         prefijo: str, profundidad: int = 0,
+                         plazo: float | None = None,
+                         gen: int | None = None) -> tuple[list[str], list[str]]:
     """
     Descarga los edificios de un bbox, partiéndolo en cuatro si el servidor no
     puede con él. La recursión se adapta a la densidad: el campo baja de una
@@ -281,7 +373,7 @@ def _descargar_edificios(bbox: tuple[float, float, float, float], output_dir: st
     cuerpo = (f'(way["building"]({s},{w},{n},{e});'
               f'relation["building"]({s},{w},{n},{e}););')
 
-    contenido, motivo = _consultar(cuerpo)
+    contenido, motivo = _consultar(cuerpo, plazo, gen)
     if contenido is not None:
         ruta = os.path.join(output_dir, f"{prefijo}.osm")
         with open(ruta, "wb") as f:
@@ -294,6 +386,11 @@ def _descargar_edificios(bbox: tuple[float, float, float, float], output_dir: st
 
     if profundidad >= MAX_PROFUNDIDAD:
         return [], [f"({s:.3f},{w:.3f})-({n:.3f},{e:.3f}): {motivo}"]
+    # Trocear solo tiene sentido si el problema es el TAMANO del area. Con el
+    # presupuesto agotado -o cerca- es que los servidores no responden, y
+    # partir en cuatro multiplicaria la espera en vez de resolver nada.
+    if _cancelada(gen) or (plazo is not None and plazo - time.time() < 60):
+        return [], [f"({s:.3f},{w:.3f})-({n:.3f},{e:.3f}): {motivo}"]
 
     # Partir en cuatro y reintentar cada cuadrante
     archivos, fallos = [], []
@@ -303,10 +400,213 @@ def _descargar_edificios(bbox: tuple[float, float, float, float], output_dir: st
         (mid_lat, w, n, mid_lon), (mid_lat, mid_lon, n, e),
     ]
     for k, q in enumerate(cuadrantes):
-        a, f_ = _descargar_edificios(q, output_dir, f"{prefijo}_{k}", profundidad + 1)
+        a, f_ = _descargar_edificios(q, output_dir, f"{prefijo}_{k}", profundidad + 1, plazo, gen)
         archivos += a
         fallos += f_
     return archivos, fallos
+
+
+
+
+# ============================================================
+# EXTRACTO LOCAL (Geofabrik + osmconvert / osmfilter)
+# ============================================================
+# Overpass es un servicio publico y gratuito que se satura y se cae (el
+# 25-sep-2026 los cuatro espejos devolvieron 504 durante horas hasta para una
+# manzana). Y ademas cambia a diario: el mapa de hoy no es el de hace tres
+# meses, que para una tesis es un problema de reproducibilidad.
+#
+# La alternativa: un extracto del pais entero, descargado UNA vez de
+# Geofabrik (Ecuador: 125 MB) y congelado con su fecha. Cualquier rectangulo
+# se recorta en local con osmconvert en segundos, sin red, y se filtra con
+# osmfilter para quedarse con lo mismo que se pedia a Overpass (vias,
+# edificios y restricciones de giro). Overpass queda como respaldo para un
+# area fuera del extracto.
+#
+# Sobre `--complete-ways`: la opcion de osmconvert que devuelve enteras las
+# vias que cruzan el borde no funciona en la build de Windows (salida vacia
+# con .pbf y con .o5m, con y sin archivo temporal). Se compensa recortando
+# con un MARGEN alrededor del rectangulo: las vias que cruzan el borde
+# pedido llegan completas, y las unicas truncadas quedan a ~330 m fuera del
+# area, donde no hay candidatas ni vehiculos que medir.
+
+_RAIZ_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DIR_EXTRACTOS = os.environ.get("OSM_EXTRACTOS_DIR") or os.path.join(_RAIZ_REPO, "datos", "osm")
+DIR_HERRAMIENTAS = os.path.join(_RAIZ_REPO, "herramientas")
+MARGEN_EXTRACTO_DEG = float(os.environ.get("OSM_MARGEN_GRADOS", 0.003))   # ~330 m
+# Lo mismo que se pide a Overpass: red vial, obstaculos y giros prohibidos.
+FILTRO_EXTRACTO = "highway= building= type=restriction"
+ARCHIVO_ORIGEN = "osm_origen.json"
+
+
+def _herramienta(nombre: str) -> str | None:
+    """
+    Ruta a osmconvert/osmfilter: variable de entorno (OSMCONVERT / OSMFILTER),
+    el PATH, o `herramientas/<nombre>.exe` en el repo. None si no esta.
+    """
+    ruta = os.environ.get(nombre.upper())
+    if ruta and os.path.isfile(ruta):
+        return ruta
+    ruta = shutil.which(nombre)
+    if ruta:
+        return ruta
+    for candidato in (nombre + ".exe", nombre):
+        ruta = os.path.join(DIR_HERRAMIENTAS, candidato)
+        if os.path.isfile(ruta):
+            return ruta
+    return None
+
+
+def herramientas_extracto() -> dict:
+    return {"osmconvert": _herramienta("osmconvert"), "osmfilter": _herramienta("osmfilter")}
+
+
+def extractos() -> list[dict]:
+    """
+    Extractos registrados en `datos/osm/`: cada `<archivo>` con su
+    `<archivo>.meta.json` (bbox, fecha de los datos, url, md5). Lo escribe
+    `scn.py extracto`.
+    """
+    salida = []
+    if not os.path.isdir(DIR_EXTRACTOS):
+        return salida
+    for nombre in sorted(os.listdir(DIR_EXTRACTOS)):
+        if not (nombre.endswith(".osm.pbf") or nombre.endswith(".o5m")):
+            continue
+        meta_p = os.path.join(DIR_EXTRACTOS, nombre + ".meta.json")
+        if not os.path.isfile(meta_p):
+            continue
+        try:
+            with open(meta_p, encoding="utf-8") as f:
+                meta = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if not meta.get("bbox"):
+            continue
+        meta["archivo"] = nombre
+        meta["ruta"] = os.path.join(DIR_EXTRACTOS, nombre)
+        salida.append(meta)
+    return salida
+
+
+def _extracto_para(min_lon: float, min_lat: float, max_lon: float, max_lat: float) -> dict | None:
+    """El extracto registrado cuyo bbox contiene al pedido (el primero que lo cumpla)."""
+    for ext in extractos():
+        w, s, e, n = ext["bbox"]
+        if w <= min_lon and s <= min_lat and e >= max_lon and n >= max_lat:
+            return ext
+    return None
+
+
+def estadisticas_extracto(ruta: str) -> dict:
+    """bbox y fecha de los datos de un extracto, con `osmconvert --out-statistics`."""
+    conv = _herramienta("osmconvert")
+    if not conv:
+        raise FileNotFoundError("no se encuentra osmconvert (herramientas/osmconvert.exe)")
+    r = subprocess.run([conv, ruta, "--out-statistics"], capture_output=True,
+                       text=True, timeout=600)
+    valores = {}
+    for linea in r.stdout.splitlines():
+        if ":" in linea:
+            k, v = linea.split(":", 1)
+            valores[k.strip()] = v.strip()
+    try:
+        bbox = [float(valores["lon min"]), float(valores["lat min"]),
+                float(valores["lon max"]), float(valores["lat max"])]
+    except (KeyError, ValueError):
+        raise ValueError(f"osmconvert no devolvio el bbox de {ruta}: {r.stderr[:200]}")
+    return {"bbox": bbox, "fecha_datos": valores.get("timestamp max"),
+            "nodos": int(valores.get("nodes", 0)), "vias": int(valores.get("ways", 0))}
+
+
+def registrar_extracto(ruta: str, url: str | None = None, md5: str | None = None) -> dict:
+    """Escribe `<archivo>.meta.json` con bbox, fecha de datos, url y md5."""
+    meta = estadisticas_extracto(ruta)
+    meta.update({"url": url, "md5": md5,
+                 "registrado": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                 "bytes": os.path.getsize(ruta)})
+    with open(ruta + ".meta.json", "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+    return meta
+
+
+def _contar(ruta: str, patron: bytes) -> int:
+    """Ocurrencias de `patron` en un archivo, por trozos (un .osm de ciudad pesa cientos de MB)."""
+    total, cola = 0, b""
+    with open(ruta, "rb") as f:
+        while True:
+            trozo = f.read(1 << 20)
+            if not trozo:
+                break
+            datos = cola + trozo
+            total += datos.count(patron)
+            cola = datos[-len(patron):]
+    return total
+
+
+def _recortar_extracto(ext: dict, min_lon: float, min_lat: float, max_lon: float,
+                       max_lat: float, output_dir: str) -> tuple[list[str] | None, str]:
+    """
+    Recorta el rectangulo (con margen) del extracto y lo filtra a vias,
+    edificios y restricciones. Deja `output_dir/map.osm`.
+
+    Retorna ([map.osm], "") o (None, motivo).
+    """
+    conv, filt = _herramienta("osmconvert"), _herramienta("osmfilter")
+    if not conv or not filt:
+        return None, "faltan osmconvert/osmfilter (ver herramientas/README.md)"
+    m = MARGEN_EXTRACTO_DEG
+    bbox = f"{min_lon - m:.6f},{min_lat - m:.6f},{max_lon + m:.6f},{max_lat + m:.6f}"
+    bruto = os.path.join(output_dir, "map_bruto.o5m")
+    salida = os.path.join(output_dir, "map.osm")
+    t0 = time.perf_counter()
+    try:
+        r = subprocess.run([conv, ext["ruta"], f"-b={bbox}", "--drop-author",
+                            "--out-o5m", f"-o={bruto}"],
+                           capture_output=True, text=True, timeout=1800)
+        if r.returncode != 0 or not os.path.isfile(bruto):
+            return None, f"osmconvert fallo: {r.stderr[:200]}"
+        r = subprocess.run([filt, bruto, f"--keep={FILTRO_EXTRACTO}", f"-o={salida}"],
+                           capture_output=True, text=True, timeout=1800)
+        if r.returncode != 0 or not os.path.isfile(salida):
+            return None, f"osmfilter fallo: {r.stderr[:200]}"
+    except (subprocess.SubprocessError, OSError) as e:
+        return None, f"error ejecutando las herramientas: {type(e).__name__}"
+    finally:
+        try:
+            os.remove(bruto)
+        except OSError:
+            pass
+
+    vias = _contar(salida, b'k="highway"')
+    edificios = _contar(salida, b'k="building"')
+    if vias == 0:
+        return None, "el recorte no contiene vias (area fuera del extracto o sin calles)"
+    if edificios == 0:
+        # Igual que con Overpass: sin obstaculos la linea de vista seria
+        # perfecta en todas partes, un resultado falso que pareceria correcto.
+        return None, "el recorte no contiene edificios: sin obstaculos la linea de vista no es valida"
+    _avisar(f"recorte del extracto {ext['archivo']} (datos del {str(ext.get('fecha_datos'))[:10]}) "
+            f"en {time.perf_counter() - t0:.1f} s: {vias} vias, {edificios} edificios, "
+            f"{os.path.getsize(salida) / 1e6:.1f} MB")
+    return [salida], ""
+
+
+def _escribir_origen(output_dir: str, origen: dict) -> None:
+    """`osm_origen.json`: de donde salio el mapa (extracto con fecha, u Overpass). Va al manifest."""
+    try:
+        with open(os.path.join(output_dir, ARCHIVO_ORIGEN), "w", encoding="utf-8") as f:
+            json.dump(origen, f, indent=2)
+    except OSError:
+        pass
+
+
+def leer_origen(output_dir: str) -> dict:
+    try:
+        with open(os.path.join(output_dir, ARCHIVO_ORIGEN), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
 
 
 # ============================================================
@@ -321,9 +621,19 @@ def _clave_cache(bbox: tuple[float, float, float, float]) -> str:
     return hashlib.sha1(txt.encode()).hexdigest()[:16]
 
 
+# Carpeta unica para la cache, a nivel de REPOSITORIO.
+#
+# Antes se derivaba de la carpeta de salida (`dirname(output_dir)/.osm_cache`),
+# lo que funcionaba mientras todo iba a `output/` pero se rompe con una carpeta
+# por corrida: cada corrida miraba en un sitio distinto y volvia a descargar de
+# Overpass lo que ya tenia. La cache tiene sentido precisamente porque el area
+# se comparte entre corridas, asi que su sitio no puede depender de la salida.
+_RAIZ_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 def _dir_cache(output_dir: str, clave: str) -> str:
-    raiz = os.environ.get("OSM_CACHE_DIR") or os.path.join(
-        os.path.dirname(os.path.abspath(output_dir)), ".osm_cache")
+    """Carpeta de cache para un area. `output_dir` se ignora a proposito."""
+    raiz = os.environ.get("OSM_CACHE_DIR") or os.path.join(_RAIZ_REPO, ".osm_cache")
     return os.path.join(raiz, clave)
 
 
@@ -354,14 +664,22 @@ def _cache_recuperar(carpeta: str, output_dir: str) -> list[str] | None:
             destino = os.path.join(output_dir, nombre)
             shutil.copyfile(origen, destino)
             rutas.append(destino)
+        if info.get("origen"):
+            _escribir_origen(output_dir, {**info["origen"], "cache": True})
         return rutas or None
     except (OSError, ValueError, KeyError):
         return None
 
 
-def _cache_guardar(carpeta: str, rutas: list[str]) -> None:
+def _cache_guardar(carpeta: str, rutas: list[str],
+                   bbox: tuple[float, float, float, float] | None = None,
+                   origen: dict | None = None) -> None:
     """Guarda los .osm recién descargados. Un fallo aquí no debe romper la
-    descarga: la caché es una optimización, no un requisito."""
+    descarga: la caché es una optimización, no un requisito.
+
+    El bbox se anota en meta.json: la clave es un hash y no se puede invertir,
+    y sin el rectángulo original un área ya descargada no se puede volver a
+    pedir cuando Overpass no responde (pasó el 25-sep-2026)."""
     if OSM_CACHE_DIAS <= 0:
         return
     try:
@@ -374,7 +692,9 @@ def _cache_guardar(carpeta: str, rutas: list[str]) -> None:
         # El meta se escribe AL FINAL: si el proceso muere a medias, la entrada
         # queda sin meta y `_cache_recuperar` la ignora en vez de servir basura.
         with open(os.path.join(carpeta, "meta.json"), "w", encoding="utf-8") as f:
-            json.dump({"ts": time.time(), "archivos": nombres}, f)
+            json.dump({"ts": time.time(), "archivos": nombres,
+                       "bbox": list(bbox) if bbox else None,
+                       "origen": origen}, f)
     except OSError:
         pass
 
@@ -427,6 +747,25 @@ def descargar_mapa_osm(min_lon: float, min_lat: float, max_lon: float, max_lat: 
         print(f"  OSM en cache: {len(rutas)} archivo(s), sin descargar nada")
         return ",".join(rutas), None
 
+    # ---- Extracto local (sin red) ----
+    ext = _extracto_para(min_lon, min_lat, max_lon, max_lat)
+    if ext is None:
+        _avisar("sin extracto local que cubra el area (datos/osm/, ver `scn.py extracto`); "
+                "se pide a Overpass")
+    else:
+        rutas, motivo = _recortar_extracto(ext, min_lon, min_lat, max_lon, max_lat, output_dir)
+        if rutas:
+            origen = {"fuente": "extracto", "archivo": ext["archivo"],
+                      "fecha_datos": ext.get("fecha_datos"), "url": ext.get("url"),
+                      "md5": ext.get("md5"), "margen_grados": MARGEN_EXTRACTO_DEG,
+                      # El rectangulo PEDIDO: el pipeline poda la red a el, porque
+                      # el recorte lleva margen (ver sumo_pipeline).
+                      "bbox": [min_lon, min_lat, max_lon, max_lat]}
+            _escribir_origen(output_dir, origen)
+            _cache_guardar(carpeta_cache, rutas, (min_lon, min_lat, max_lon, max_lat), origen)
+            return ",".join(rutas), None
+        _avisar(f"el extracto local no sirvio ({motivo}); se pide a Overpass")
+
     # ---- 1) Red vial y edificios, EN PARALELO ----
     # Son consultas independientes y antes iban en serie. Overpass admite dos
     # peticiones simultáneas por IP, que es justo lo que se usa aquí; no se
@@ -434,16 +773,22 @@ def descargar_mapa_osm(min_lon: float, min_lat: float, max_lon: float, max_lat: 
     #
     # Red vial: una sola consulta (es la parte ligera). Se incluyen las
     # restricciones de giro porque mejoran la red y pesan poco.
+    plazo = time.time() + PRESUPUESTO_S
+    gen = _GENERACION
+    _avisar(f"descarga nueva; presupuesto total {PRESUPUESTO_S / 60:.0f} min "
+            f"(OVERPASS_PRESUPUESTO_S)")
     cuerpo_vias = (f'(way["highway"]({s},{w},{n},{e});'
                    f'relation["type"="restriction"]({s},{w},{n},{e}););')
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        fut_vias = pool.submit(_consultar, cuerpo_vias)
+        fut_vias = pool.submit(_consultar, cuerpo_vias, plazo, gen)
         # Los edificios se trocean por cuadrantes, subdividiendo lo que falle.
         fut_edif = pool.submit(_descargar_edificios, (s, w, n, e),
-                               output_dir, "map_edificios")
+                               output_dir, "map_edificios", 0, plazo, gen)
         contenido, motivo = fut_vias.result()
         archivos, fallos = fut_edif.result()
+    if _cancelada(gen):
+        return None, "descarga cancelada (escenario nuevo o cierre de la API)"
 
     if contenido is None:
         return None, (
@@ -468,6 +813,8 @@ def descargar_mapa_osm(min_lon: float, min_lat: float, max_lon: float, max_lat: 
         )
 
     # Solo se cachea una descarga COMPLETA (vías + al menos un edificio).
-    _cache_guardar(carpeta_cache, rutas)
-
+    origen = {"fuente": "overpass", "fecha_descarga": time.strftime("%Y-%m-%dT%H:%M:%S"),
+              "servidores": [_host(u) for u in OVERPASS_URLS]}
+    _escribir_origen(output_dir, origen)
+    _cache_guardar(carpeta_cache, rutas, (min_lon, min_lat, max_lon, max_lat), origen)
     return ",".join(rutas), None

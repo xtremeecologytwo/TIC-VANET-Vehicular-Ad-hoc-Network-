@@ -15,6 +15,41 @@ import time
 # `correr` es subprocess.run + registro, para que 'Generar escenario'
 # pueda cortar una corrida anterior que siguiera viva (ver procesos.py).
 from .procesos import correr
+from . import almacen
+from .descargar_osm import leer_origen
+
+
+def _bbox_en_coordenadas_red(net_path: str, bbox: list) -> str:
+    """
+    El rectangulo pedido (lon/lat) en las coordenadas x,y de la red, para
+    `polyconvert --prune.boundary`. Usa la proyeccion y el netOffset que
+    netconvert escribe en el .net.xml: es la misma transformacion que aplica
+    la API para pintar en el mapa, en sentido inverso.
+    """
+    from pyproj import Transformer
+    from .parsear_xml import obtener_proyeccion
+    proy = obtener_proyeccion(net_path)
+    tr = Transformer.from_crs("EPSG:4326", proy["proj"], always_xy=True)
+    ox, oy = proy["netOffset"]
+    w, s, e, n = bbox
+    x1, y1 = tr.transform(w, s)
+    x2, y2 = tr.transform(e, n)
+    return f"{x1 + ox:.2f},{y1 + oy:.2f},{x2 + ox:.2f},{y2 + oy:.2f}"
+
+
+# ============================================================
+# SEMILLA
+# ============================================================
+# `randomTrips` y `sumo` usan generadores pseudoaleatorios. Sin fijar la
+# semilla, dos corridas con los MISMOS parametros producen rutas y trazas
+# distintas, y el escenario deja de ser reproducible: no se puede repetir un
+# resultado, ni comparar dos configuraciones sobre la misma movilidad, ni
+# publicar un suplemento que otra persona pueda rehacer.
+#
+# 42 es el valor que uso la campana del articulo V5, asi que es el que
+# reproduce sus numeros. Se puede cambiar por corrida (argumento `semilla`) o
+# globalmente con SUMO_SEMILLA.
+SEMILLA_POR_DEFECTO = int(os.environ.get("SUMO_SEMILLA", 42))
 
 
 # ============================================================
@@ -221,12 +256,18 @@ def _buscar_random_trips() -> str:
 
 def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output",
                            num_vehiculos: int = 20,
-                           periodo_salida: float = 1.0) -> list[dict]:
+                           periodo_salida: float = 1.0,
+                           semilla: int = SEMILLA_POR_DEFECTO) -> list[dict]:
     """
     Ejecuta el pipeline completo de SUMO de forma secuencial.
-    
+
+    Cada herramienta consulta primero el almacen de etapas (`almacen.py`):
+    si esa red / esos poligonos / esas rutas ya se calcularon con las mismas
+    entradas, se enlazan en `output_dir` y la herramienta no se ejecuta. El
+    paso correspondiente sale con `"cache": True` y `segundos` ~ 0.
+
     Parámetros:
-        osm_path: Ruta al archivo .osm descargado.
+        osm_path: Ruta al archivo .osm descargado (o varios separados por comas).
         output_dir: Directorio donde se generarán los archivos de salida.
         num_vehiculos: Número de vehículos a generar en las rutas aleatorias.
                       Cada vehículo se crea con una ruta aleatoria origen→destino.
@@ -234,11 +275,12 @@ def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output",
                        Con periodo=1.0 y num_vehiculos=20, los vehículos salen
                        en t=0, t=1, t=2, ..., t=19. Con periodo=2.0, salen en
                        t=0, t=2, t=4, ..., t=38.
-    
+        semilla: fija randomTrips; forma parte de la clave de las rutas.
+
     Retorna:
         Lista de diccionarios con el resultado de cada paso:
         [{"paso": str, "exito": bool, "mensaje": str,
-          "segundos": float}, ...]   # "segundos" solo en los pasos con exito
+          "segundos": float, "cache": bool}, ...]   # "segundos" solo en los pasos con exito
     """
     resultados = []
 
@@ -248,8 +290,7 @@ def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output",
     net_path = os.path.join(output_dir, "mapa.net.xml")
     poly_path = os.path.join(output_dir, "mapa.poly.xml")
     rou_path = os.path.join(output_dir, "mapa.rou.xml")
-    
-    # ---- Paso 1: NETCONVERT ----
+
     # ---- FILTRO DE VIAS ----
     # La consulta a Overpass pide `highway=*`, que en OSM incluye aceras, sendas,
     # escaleras y ciclovias. Un coche no pisa nada de eso, pero filtrarlo NO es
@@ -285,97 +326,159 @@ def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output",
                                "highway.pedestrian,highway.bridleway")
     filtro_vias = os.environ.get("SUMO_FILTRO_VIAS", FILTRO_VIAS_POR_DEFECTO).strip()
 
-    cmd_netconvert = [
-        "netconvert",
-        "--ramps.guess",
-        "--remove-edges.isolated",
-        "--edges.join",
-        "--geometry.remove",
-        "--osm-files", osm_path,
-        "-o", net_path
-    ]
+    # Las opciones van aparte de las rutas de archivo: son lo que entra en la
+    # clave de la red (una ruta distinta no cambia la red; un filtro sí).
+    opciones_net = ["--ramps.guess", "--remove-edges.isolated",
+                    "--edges.join", "--geometry.remove"]
     if filtro_vias:
-        cmd_netconvert[-4:-4] = ["--remove-edges.by-type", filtro_vias]
+        opciones_net += ["--remove-edges.by-type", filtro_vias]
 
-    _t0 = time.perf_counter()
-    try:
-        resultado = correr(cmd_netconvert, timeout=lim, etiqueta="netconvert")
-        resultados.append({
-            "paso": "netconvert",
-            "exito": True,
-            "segundos": time.perf_counter() - _t0,
-            "mensaje": f"Red vial generada: {net_path}",
-            "archivo": net_path
-        })
-    except FileNotFoundError:
-        resultados.append({
-            "paso": "netconvert",
-            "exito": False,
-            "mensaje": "No se encontró 'netconvert'. ¿Está SUMO instalado y en el PATH del sistema?"
-        })
-        return resultados  # No tiene sentido continuar
-    except subprocess.CalledProcessError as e:
-        resultados.append({
-            "paso": "netconvert",
-            "exito": False,
-            "mensaje": f"Error en netconvert:\n{e.stderr[:500]}"
-        })
-        return resultados
-    except subprocess.TimeoutExpired:
-        resultados.append({
-            "paso": "netconvert",
-            "exito": False,
-            "mensaje": _msg_timeout("netconvert", lim)
-        })
-        return resultados
+    # ---- PODA AL RECTANGULO PEDIDO (solo mapas del extracto local) ----
+    # El extracto se recorta con un margen de ~330 m porque `--complete-ways`
+    # de osmconvert no funciona en Windows (ver descargar_osm.py). Sin podar,
+    # la red incluiria ese anillo: medido en el area de prueba, 557 junctions
+    # en vez de las 258 que daba Overpass. `--keep-edges.in-geo-boundary`
+    # conserva ENTERAS las aristas que tocan el rectangulo -la misma semantica
+    # que la consulta bbox de Overpass-. Con poda: 251 junctions (datos una
+    # semana mas nuevos). Los edificios se podan al mismo rectangulo con
+    # `polyconvert --prune.boundary` (281 = Overpass; con `--prune.in-net`
+    # quedaban 710, porque el rectangulo de la RED incluye las aristas que
+    # cruzan el borde). No se aplica a los mapas de Overpass para no alterar
+    # las corridas anteriores ni la reproduccion del articulo.
+    origen = leer_origen(output_dir)
+    podar_bbox = None
+    if origen.get("fuente") == "extracto" and origen.get("bbox"):
+        podar_bbox = list(origen["bbox"])
+        w_, s_, e_, n_ = podar_bbox
+        opciones_net += ["--keep-edges.in-geo-boundary", f"{w_},{s_},{e_},{n_}"]
+    cmd_netconvert = ["netconvert", *opciones_net,
+                      "--osm-files", osm_path, "-o", net_path]
 
-    # ---- Paso 2: POLYCONVERT ----
-    cmd_polyconvert = [
-        "polyconvert",
-        "--net-file", net_path,
-        "--osm-files", osm_path,
-        "-o", poly_path
-    ]
-    
-    _t0 = time.perf_counter()
-    try:
-        correr(cmd_polyconvert, timeout=lim, etiqueta="polyconvert")
-        resultados.append({
-            "paso": "polyconvert",
-            "exito": True,
-            "segundos": time.perf_counter() - _t0,
-            "mensaje": f"Polígonos generados: {poly_path}",
-            "archivo": poly_path
-        })
-    except FileNotFoundError:
-        resultados.append({
-            "paso": "polyconvert",
-            "exito": False,
-            "mensaje": "No se encontró 'polyconvert'. ¿Está SUMO instalado y en el PATH del sistema?"
-        })
-        return resultados
-    except subprocess.CalledProcessError as e:
-        resultados.append({
-            "paso": "polyconvert",
-            "exito": False,
-            "mensaje": f"Error en polyconvert:\n{e.stderr[:500]}"
-        })
-        return resultados
-    except subprocess.TimeoutExpired:
-        resultados.append({
-            "paso": "polyconvert",
-            "exito": False,
-            "mensaje": _msg_timeout("polyconvert", lim)
-        })
-        return resultados
-
-    # ---- Paso 3: RANDOM TRIPS ----
-    random_trips_path = _buscar_random_trips()
-
+    # ---- Claves de reutilizacion (encadenadas: ver almacen.py) ----
     # Calcular el tiempo final de generación de vehículos:
     # Si queremos 20 vehículos con periodo 1.0s, el último vehículo sale en t=19
     # Fórmula: end_time = num_vehiculos * periodo_salida
     end_time = num_vehiculos * periodo_salida
+    version = almacen.version_sumo()
+    sha_osm = almacen.sha_varios(osm_path)
+    clave_red = almacen.clave("red", version, sha_osm, opciones_net)
+    clave_rutas = almacen.clave("rutas", version, clave_red, int(num_vehiculos),
+                                float(periodo_salida), float(end_time), int(semilla))
+    # La clave de `poly` se calcula tras netconvert: la poda de poligonos
+    # necesita la proyeccion de la red.
+    almacen.claves_escribir(output_dir, osm=sha_osm, red=clave_red, rutas=clave_rutas)
+
+    def _reutilizado(paso, meta, mensaje, archivo):
+        return {"paso": paso, "exito": True, "segundos": 0.0, "cache": True,
+                "archivo": archivo,
+                "mensaje": f"{mensaje} (reutilizado, calculado el "
+                           f"{meta.get('guardado', '?')[:16]})"}
+
+    # ---- Paso 1: NETCONVERT ----
+    meta = almacen.recuperar("red", clave_red, ["mapa.net.xml"], output_dir)
+    if meta:
+        resultados.append(_reutilizado("netconvert", meta, "Red vial", net_path))
+    else:
+        almacen.desvincular(net_path)
+        _t0 = time.perf_counter()
+        try:
+            correr(cmd_netconvert, timeout=lim, etiqueta="netconvert")
+            almacen.guardar("red", clave_red, output_dir, ["mapa.net.xml"],
+                            {"osm_sha256": sha_osm, "opciones": opciones_net,
+                             "sumo": version})
+            resultados.append({
+                "paso": "netconvert",
+                "exito": True,
+                "cache": False,
+                "segundos": time.perf_counter() - _t0,
+                "mensaje": f"Red vial generada: {net_path}",
+                "archivo": net_path
+            })
+        except FileNotFoundError:
+            resultados.append({
+                "paso": "netconvert",
+                "exito": False,
+                "mensaje": "No se encontró 'netconvert'. ¿Está SUMO instalado y en el PATH del sistema?"
+            })
+            return resultados  # No tiene sentido continuar
+        except subprocess.CalledProcessError as e:
+            resultados.append({
+                "paso": "netconvert",
+                "exito": False,
+                "mensaje": f"Error en netconvert:\n{e.stderr[:500]}"
+            })
+            return resultados
+        except subprocess.TimeoutExpired:
+            resultados.append({
+                "paso": "netconvert",
+                "exito": False,
+                "mensaje": _msg_timeout("netconvert", lim)
+            })
+            return resultados
+
+    # ---- Paso 2: POLYCONVERT ----
+    opciones_poly: list[str] = []
+    if podar_bbox:
+        opciones_poly = ["--prune.boundary", _bbox_en_coordenadas_red(net_path, podar_bbox)]
+    clave_poly = almacen.clave("poly", version, clave_red, opciones_poly)
+    almacen.claves_escribir(output_dir, poly=clave_poly)
+    cmd_polyconvert = [
+        "polyconvert", *opciones_poly,
+        "--net-file", net_path,
+        "--osm-files", osm_path,
+        "-o", poly_path
+    ]
+
+    meta = almacen.recuperar("poly", clave_poly, ["mapa.poly.xml"], output_dir)
+    if meta:
+        resultados.append(_reutilizado("polyconvert", meta, "Polígonos", poly_path))
+    else:
+        almacen.desvincular(poly_path)
+        _t0 = time.perf_counter()
+        try:
+            correr(cmd_polyconvert, timeout=lim, etiqueta="polyconvert")
+            almacen.guardar("poly", clave_poly, output_dir, ["mapa.poly.xml"],
+                            {"red": clave_red, "sumo": version})
+            resultados.append({
+                "paso": "polyconvert",
+                "exito": True,
+                "cache": False,
+                "segundos": time.perf_counter() - _t0,
+                "mensaje": f"Polígonos generados: {poly_path}",
+                "archivo": poly_path
+            })
+        except FileNotFoundError:
+            resultados.append({
+                "paso": "polyconvert",
+                "exito": False,
+                "mensaje": "No se encontró 'polyconvert'. ¿Está SUMO instalado y en el PATH del sistema?"
+            })
+            return resultados
+        except subprocess.CalledProcessError as e:
+            resultados.append({
+                "paso": "polyconvert",
+                "exito": False,
+                "mensaje": f"Error en polyconvert:\n{e.stderr[:500]}"
+            })
+            return resultados
+        except subprocess.TimeoutExpired:
+            resultados.append({
+                "paso": "polyconvert",
+                "exito": False,
+                "mensaje": _msg_timeout("polyconvert", lim)
+            })
+            return resultados
+
+    # ---- Paso 3: RANDOM TRIPS ----
+    meta = almacen.recuperar("rutas", clave_rutas, ["mapa.rou.xml"], output_dir)
+    if meta:
+        resultados.append(_reutilizado(
+            "randomTrips", meta,
+            f"Rutas ({_contar_vehiculos(rou_path)} de {num_vehiculos} vehículos, "
+            f"semilla {semilla})", rou_path))
+        return resultados
+
+    random_trips_path = _buscar_random_trips()
 
     # El umbral decide si repartir compensa para ESTE numero de vehiculos, y el
     # tamano de la red cuanta memoria costaria cada hilo.
@@ -390,6 +493,9 @@ def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output",
         "-r", rou_path,
         "-e", str(end_time),
         "-p", str(periodo_salida),
+        # SEMILLA: sin ella randomTrips usa una distinta en cada corrida y el
+        # escenario no se puede repetir. Ver SEMILLA_POR_DEFECTO.
+        "--seed", str(semilla),
         # Ver `_hilos()`: sin esto duarouter usa un solo nucleo y dijkstra.
         "--duarouter-routing-threads", str(hilos),
         # CH = jerarquias de contraccion. Dijkstra y A* buscan el camino en cada
@@ -435,18 +541,24 @@ def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output",
         # salieron de verdad y decirlo, para que la cifra no se de por supuesta.
         "--no-validate",
     ]
-    
+
+    almacen.desvincular(rou_path)
     _t0 = time.perf_counter()
     try:
         correr(cmd_random_trips, timeout=lim, etiqueta="randomTrips")
+        almacen.guardar("rutas", clave_rutas, output_dir, ["mapa.rou.xml"],
+                        {"red": clave_red, "num_vehiculos": num_vehiculos,
+                         "periodo_salida": periodo_salida, "end_time": end_time,
+                         "semilla": semilla, "sumo": version})
         resultados.append({
             "paso": "randomTrips",
             "exito": True,
+            "cache": False,
             "segundos": time.perf_counter() - _t0,
             "mensaje": (
                 f"Rutas generadas: {rou_path} "
                 f"({_contar_vehiculos(rou_path)} de {num_vehiculos} vehículos, "
-                f"periodo {periodo_salida}s, {hilos} hilos, A*)"
+                f"periodo {periodo_salida}s, semilla {semilla}, {hilos} hilos)"
             ),
             "archivo": rou_path
         })
@@ -468,5 +580,5 @@ def ejecutar_pipeline_sumo(osm_path: str, output_dir: str = "output",
             "exito": False,
             "mensaje": _msg_timeout("randomTrips", lim)
         })
-    
+
     return resultados

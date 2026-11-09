@@ -200,3 +200,27 @@
 
 /* Leaflet: que los controles no tapen las esquinas del marco */
 .leaflet-top.leaflet-left { margin: 6px; }
+
+/* ---------- capa física (IEEE 802.11p, notas del tutor) ---------- */
+.fis { display: grid; grid-template-columns: 1.45fr 1fr; gap: 0; }
+.fis > div + div { border-left: 1px solid var(--line); }
+@media (max-width: 860px) { .fis { grid-template-columns: 1fr; } .fis > div + div { border-left: 0; border-top: 1px solid var(--line); } }
+.fis-ctl { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px 12px;
+  padding: 12px 15px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+.fis-ctl label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.fis-ctl select, .fis-ctl input { font-size: 12.5px; padding: 5px 8px; border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm); background: var(--surface); color: var(--ink); font-family: var(--font-mono); }
+.fis-chart { width: 100%; height: auto; display: block; padding: 10px 10px 0; }
+.fis-chart .grid { stroke: var(--line); }
+.fis-chart .curve { fill: none; stroke: var(--accent); stroke-width: 2; }
+.fis-chart .lvl { stroke: var(--faint); stroke-dasharray: 4 3; }
+.fis-chart .rad { stroke: var(--ok); }
+.fis-chart text { font-family: var(--font-mono); font-size: 10px; fill: var(--muted); }
+.fis-src { font-size: 10.5px; color: var(--faint); font-family: var(--font-mono); padding: 4px 15px 8px; }
+.fis-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; padding: 0 15px 12px; }
+.fis-kv > div { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 10px; }
+.fis-kv .lab { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); font-weight: 600; }
+.fis-kv .val { font-family: var(--font-mono); font-size: 15px; font-weight: 650; margin-top: 2px; }
+.fis-kv .val small { font-size: 10px; color: var(--muted); font-weight: 500; }
+.fis-apply { display: flex; gap: 10px; padding: 4px 15px 14px; }
+.fis-apply .cta { margin: 0; }

@@ -21,3 +21,8 @@ python-multipart>=0.0.9
 # académica gratuita de IBM), que solo soporta Python 3.7–3.10 → de ahí 3.10.
 docplex>=2.25
 cplex>=22.1 ; python_version < "3.13"
+
+# --- CLI de campañas (scn.py campana: especificación en YAML) ---
+pyyaml>=6.0
+pandas>=2.0          # scn.py reporte / exportar
+matplotlib>=3.7      # figuras del reporte

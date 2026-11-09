@@ -74,3 +74,15 @@ desktop.ini
 
 # Cache de descargas de Overpass (se regenera sola)
 .osm_cache/
+
+# Comprimidos que se mandan puntualmente (se regeneran cuando haga falta)
+*.rar
+
+# Corridas del CLI (scn.py). El disco es la verdad, pero es verdad pesada: una
+# sola corrida de ciudad deja cientos de MB de .net.xml y de FCD, y se
+# regenera entera con su semilla, que si esta en el catalogo. Para el material
+# suplementario del articulo se exporta el catalogo, no se versiona la carpeta.
+datos/
+
+# Binarios de terceros (osmconvert/osmfilter): se descargan segun herramientas/README.md
+herramientas/*.exe

@@ -1,0 +1,71 @@
+# ============================================================================
+# Campaña fisica_v1 — despliegue óptimo de RSU frente a la capa física 802.11p
+# ============================================================================
+# Uso:
+#   python scn.py campana campanas/fisica_v1.yaml --plan     # ver qué se hará
+#   python scn.py campana campanas/fisica_v1.yaml            # ejecutar (se puede
+#                                                            # cortar con Ctrl+C y reanudar)
+#   python scn.py reporte --campana fisica_v1 --semillas     # figuras + tablas (media e IC 95 %)
+# Las tres campañas de la tesis, semilla a semilla, en un solo comando:
+#   python scn.py campana campanas/fisica_v1.yaml campanas/trafico_v1.yaml campanas/presupuesto_v1.yaml --paralelo auto
+#
+# Diseño: factorial completo 3 x 6 x 3 x 2 = 108 puntos, repetido con 10
+# semillas (1080 corridas). Dentro de una semilla toda diferencia entre puntos
+# se debe a los factores; las 10 semillas (otro tráfico sobre la misma área y
+# las mismas candidatas) dan la media y el intervalo de confianza de cada punto.
+# Medido con la semilla 42: unas 2 h 45 por semilla.
+#
+# Por qué estos factores
+# ----------------------
+# El alcance de la OBU, el coste de cada salto y la capacidad de una RSU NO se
+# eligen a mano: los fija la configuración física de 802.11p a través del
+# modelo del tutor (carpeta Luis Urquiza/, backend/capa_fisica.py):
+#   radio  = r80 / r90 de la curva P(éxito) frente a distancia, con interferente
+#   P[h]   = Gamma_h = 1 / P(ruta de h saltos)   (experimento multisalto)
+#   Cap    = alfa * C0(tasa, paquete)            (nota de capacidad unicast)
+# Variar la TASA y el CRITERIO de fiabilidad es, por tanto, variar los tres a la
+# vez y de forma coherente.
+# ============================================================================
+
+nombre: fisica_v1
+descripcion: >
+  Efecto de la configuración física de 802.11p (tasa y criterio de fiabilidad),
+  la demanda, el número de saltos y el filtrado de candidatas sobre el
+  despliegue lexicográfico óptimo de RSU.
+
+# Área elegida con:  python scn.py mapa --nombre centro
+area: centro
+
+# Una campaña por semilla en el catálogo: fisica_v1_s42, fisica_v1_s1, ... La 42
+# es la de la primera tanda (la campaña fisica_v1 del catálogo): su simulación y
+# su M3 se reutilizan, así que fisica_v1_s42 tarda minutos.
+semillas: [42, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+duracion_min: 60          # minutos de tráfico simulado
+muestreo_min: 5           # una "foto" cada 5 min -> 12 instantes
+
+# Tope de M3 por punto: 1 h 30 (indicación del tutor). Se reparte entre los tres
+# niveles del lexicográfico (15 / 60 / 15 min). Si no termina, se guarda la
+# mejor solución hallada y queda marcada como "cortada por tiempo".
+tope_m3_s: 5400
+
+# Supuestos comunes a todas las configuraciones físicas
+fisica_base:
+  paquete_bytes: 1000              # paquete de referencia del tutor
+  escenario: with_interference     # interferente co-canal U(10, 2000) m
+  alfa: 0.80                       # contienda moderada (nota de capacidad)
+  carga_kbps: 80                   # 10 paquetes/s de 1000 B por vehículo (supuesto nuestro)
+  p_h: gamma                       # P[h] = Gamma_h   ("extra" = Gamma_h - 1)
+
+factores:
+  vehiculos: [1000, 2500, 5000]    # máximo 5000
+  # TASA:CRITERIO -> radio (m) con interferente, 1000 B:
+  #   3:r80 = 275   3:r90 = 135   6:r80 = 200   6:r90 = 100   12:r80 = 95   12:r90 = 45
+  # Añade "clasica" para comparar con los valores de antes (300 m, P = 1..H, Cap 300).
+  fisica: ["3:r80", "3:r90", "6:r80", "6:r90", "12:r80", "12:r90"]
+  H: [1, 2, 3]
+  filtrado: [C, A]                 # C = grado>=4, rho=20 (278 candidatas en V5); A = grado>=3, rho=15
+
+# Filtrados disponibles (A..D son los del artículo V5; se pueden añadir otros)
+filtrados:
+  A: {gmin: 3, rho: 15}
+  C: {gmin: 4, rho: 20}

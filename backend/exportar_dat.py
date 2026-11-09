@@ -56,6 +56,7 @@ Uso rápido (línea de comandos):
 """
 
 import os
+from collections import defaultdict
 import re
 import json
 
@@ -119,6 +120,7 @@ def construir_datos_opl(matrices_v2v: dict, tuplas_v2i: list, rsu_ids: list,
                         cap_real: float = 300.0, cap_inf: float = 10000.0,
                         penal_desconexion: float = 1000.0,
                         carga_default: float = 10.0,
+                        penalizaciones: list | None = None,
                         forzar_simetria: bool = True,
                         solo_rsu_conectados: bool = True,
                         timesteps: list | None = None) -> dict:
@@ -143,6 +145,8 @@ def construir_datos_opl(matrices_v2v: dict, tuplas_v2i: list, rsu_ids: list,
         cap_inf: capacidad Cap[r_inf] del RSU artificial (debe ser grande).
         penal_desconexion: penalización P[hmax] del salto de desconexión.
         carga_default: carga de tráfico L[s][v] por defecto para cada vehículo.
+        penalizaciones: P[1..H] explícitos (p. ej. los Γ_h del experimento
+            multisalto del tutor, ver backend/capa_fisica.py). None = 1..H.
         forzar_simetria: simetriza la matriz A (recomendado, ver multisalto).
         solo_rsu_conectados: si True (recomendado), el conjunto R solo incluye
                      los RSU que algún vehículo alcanza en algún escenario. Los
@@ -244,8 +248,18 @@ def construir_datos_opl(matrices_v2v: dict, tuplas_v2i: list, rsu_ids: list,
         Cap[r] = cap_real
 
     # ---- Penalización por saltos P[1..hmax] ----
-    # 1..H: penalización creciente (h); hmax: desconexión (grande)
-    P = [float(h) for h in range(1, H + 1)] + [float(penal_desconexion)]
+    # Por defecto 1..H: creciente y lineal, sin más justificación que el orden.
+    # Con `penalizaciones` se usa el factor Γ_h = 1/P(ruta) medido en el
+    # experimento multisalto del tutor: el coste de servir a h saltos pasa a
+    # ser el número esperado de intentos end-to-end, no h. hmax sigue siendo
+    # la desconexión (grande).
+    if penalizaciones is not None:
+        if len(penalizaciones) != H:
+            raise ValueError(f"penalizaciones debe traer {H} valores (uno por salto), "
+                             f"trae {len(penalizaciones)}")
+        P = [float(p) for p in penalizaciones] + [float(penal_desconexion)]
+    else:
+        P = [float(h) for h in range(1, H + 1)] + [float(penal_desconexion)]
 
     # ---- Carga L[s][v] (por defecto igual para todos) ----
     V_ordenados = sorted(vehiculos_globales)
@@ -288,6 +302,54 @@ def construir_datos_opl(matrices_v2v: dict, tuplas_v2i: list, rsu_ids: list,
 # ============================================================
 # ESCRITURA DEL ARCHIVO .dat EN SINTAXIS OPL
 # ============================================================
+
+
+def metricas_cvr(datos: dict) -> tuple[dict, list[dict]]:
+    """
+    Calcula las métricas agregadas y el resumen por instante desde el CVR.
+
+    Las usan el CLI y la API al registrar una corrida en el catálogo.
+
+    Son las mismas magnitudes que reporta el artículo: N (instancias
+    vehículo-instante), K (pares reales alcanzables), |CVR|, Q_reach (porcentaje
+    de instancias que alcanzan alguna candidata) y M_h (pares nuevos por salto).
+    """
+    hmax = datos["hmax"]
+    t_de_s = datos.get("mapas", {}).get("escenario_a_t", {})
+
+    por_s = defaultdict(lambda: {"h": defaultdict(int), "veh": set(),
+                                 "con_rsu": set(), "sin_servicio": 0})
+    for s, h, v, r in datos["CVR"]:
+        info = por_s[s]
+        info["veh"].add(v)
+        if h == hmax:
+            info["sin_servicio"] += 1
+        else:
+            info["h"][h] += 1
+            info["con_rsu"].add(v)
+
+    filas, N, K, alcanzables = [], 0, 0, 0
+    M = defaultdict(int)
+    for s in sorted(por_s):
+        info = por_s[s]
+        n_s = len(info["veh"])
+        N += n_s
+        alcanzables += len(info["con_rsu"])
+        for h, c in info["h"].items():
+            M[h] += c
+            K += c
+        filas.append({"s": s, "t": float(t_de_s.get(s, s)), "n_vehiculos": n_s,
+                      "pares_h1": info["h"].get(1, 0),
+                      "pares_h2": info["h"].get(2, 0),
+                      "pares_h3": info["h"].get(3, 0),
+                      "sin_servicio": info["sin_servicio"]})
+
+    return ({
+        "n_instantes": len(filas), "N": N, "K": K, "cvr": len(datos["CVR"]),
+        "q_reach": 100.0 * alcanzables / N if N else 0.0,
+        "k_por_n": K / N if N else 0.0,
+        "m1": M.get(1, 0), "m2": M.get(2, 0), "m3": M.get(3, 0),
+    }, filas)
 
 
 def _fmt_set(valores) -> str:

@@ -1,0 +1,68 @@
+# ============================================================================
+# Campaña presupuesto_v1 — ¿cuánta cobertura se pierde con menos RSU, y cuánto
+# la compensa el multisalto?
+# ============================================================================
+# Uso:
+#   python scn.py campana campanas/presupuesto_v1.yaml --plan
+#   python scn.py campana campanas/presupuesto_v1.yaml --paralelo auto
+#   python scn.py reporte --campana presupuesto_v1 --semillas
+# (o las tres campañas juntas, semilla a semilla: ver fisica_v1.yaml)
+#
+# Diseño: factorial completo 2 x 6 x 3 x 2 x 3 = 216 puntos, repetido con las
+# 10 semillas de fisica_v1 y trafico_v1 (2160 corridas). El nivel "libre" es
+# el mismo problema que la carga x1 de trafico_v1 con la misma semilla: si esa
+# campaña va antes (como en el comando de las tres juntas), su M3 se reutiliza.
+#
+# Por qué estos presupuestos
+# --------------------------
+# Sin límite, el óptimo de fisica_v1 desplegó (filtrado C) 65-109 RSU con 2500
+# vehículos y 64-114 con 5000; con el filtrado A, más. Así que 60/80 y 40/60
+# aprietan en casi todas las configuraciones: la campaña mide la curva de
+# rendimientos decrecientes (cuánta cobertura aporta cada antena de más).
+# Medido antes de lanzarla (2500 veh, 6 Mb/s r80, H = 3): libre 66 RSU ->
+# 94,7 %; 60 -> 94,4 %; 40 -> 92,4 %; 20 -> 85,5 %.
+#
+# Qué se espera ver: con menos RSU, más vehículos tienen que llegar por
+# multisalto, y H = 2-3 recupera parte de la cobertura perdida.
+# ============================================================================
+
+nombre: presupuesto_v1
+descripcion: >
+  Efecto del número máximo de RSU (Ec. 5) sobre la cobertura y el uso del
+  multisalto, para cada configuración física de 802.11p, con 2500 y 5000
+  vehículos.
+
+area: centro
+semillas: [42, 1, 2, 3, 4, 5, 6, 7, 8, 9]   # presupuesto_v1_s42, ...
+duracion_min: 60
+muestreo_min: 5
+
+# Tope de M3 por punto: 3 h. Con el número de RSU limitado el nivel difícil es
+# el 1 (qué k antenas dan más cobertura): 2 h / 30 min / 30 min. Sin límite
+# ("libre") es el 2, como en trafico_v1: 30 min / 2 h / 30 min.
+tope_m3_s: 10800
+reparto_tope: [1, 4, 1]
+reparto_tope_limitado: [4, 1, 1]
+
+fisica_base:                       # igual que fisica_v1 y trafico_v1
+  paquete_bytes: 1000
+  escenario: with_interference
+  alfa: 0.80
+  carga_kbps: 80
+  p_h: gamma
+
+factores:
+  vehiculos: [2500, 5000]
+  fisica: ["3:r80", "3:r90", "6:r80", "6:r90", "12:r80", "12:r90"]
+  H: [1, 2, 3]
+  filtrado: [C, A]
+  presupuesto: [libre, alto, bajo]
+
+# MaxR de cada nivel, por demanda
+presupuestos:
+  alto: {2500: 60, 5000: 80}
+  bajo: {2500: 40, 5000: 60}
+
+filtrados:
+  A: {gmin: 3, rho: 15}
+  C: {gmin: 4, rho: 20}

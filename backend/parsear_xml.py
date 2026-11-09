@@ -30,13 +30,20 @@ def _iter_elementos(ruta: str, etiqueta: str):
         Cada elemento con esa etiqueta. **Solo es válido durante la iteración**:
         después se vacía, así que hay que leer sus atributos en el momento.
     """
-    contexto = ET.iterparse(ruta, events=("start", "end"))
-    _, raiz = next(contexto)          # el elemento raíz, para poder vaciarlo
-    for evento, elem in contexto:
-        if evento == "end" and elem.tag == etiqueta:
-            yield elem
-            elem.clear()
-            del raiz[:]               # descarta lo ya procesado
+    # El archivo se abre AQUÍ, con `with`, y no dejando que iterparse lo abra:
+    # si quien itera corta antes del final (obtener_proyeccion solo quiere el
+    # primer <location>), iterparse dejaba el archivo abierto hasta que pasaba
+    # el recolector de basura, y en Windows eso impide sobrescribir o borrar el
+    # .net.xml (WinError 32) cuando se repite M1 en la misma carpeta. Con `with`,
+    # cerrar el generador cierra el archivo en el acto.
+    with open(ruta, "rb") as fh:
+        contexto = ET.iterparse(fh, events=("start", "end"))
+        _, raiz = next(contexto)          # el elemento raíz, para poder vaciarlo
+        for evento, elem in contexto:
+            if evento == "end" and elem.tag == etiqueta:
+                yield elem
+                elem.clear()
+                del raiz[:]               # descarta lo ya procesado
 
 
 def parsear_junctions(net_xml_path: str, output_dir: str = "output") -> tuple[dict | None, str | None]:
